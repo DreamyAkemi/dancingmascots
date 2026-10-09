@@ -16,6 +16,17 @@
  *    overlay uses for the optional "bounce on the beat" effect.
  */
 
+// A reading is only "trusted" when its confidence is at least this (0..1). Measured on synthetic
+// tracks: clear drums score 0.65–0.8, quiet drums 0.45–0.7, while noise / pads / beatless sections
+// stay at 0.14–0.40 (95% below 0.31).
+const TRUST_CONFIDENCE = 0.42;
+// Without any trusted reading for this long, forget the held tempo (probably a different song now).
+const HOLD_MAX_SEC = 45;
+// If we have NEVER got a trusted reading after this long, accept consistent low-confidence ones
+// (some real music is just hard to read).
+const FALLBACK_AFTER_SEC = 30;
+const FALLBACK_MIN_CONFIDENCE = 0.25;
+
 class TempoTracker {
   /**
    * @param {object} [opts]
@@ -43,6 +54,9 @@ class TempoTracker {
     this.confidence = 0;     // 0..1, how clear the beat is
     this.raw = null;         // latest unsmoothed estimate (for the history graph)
     this._pending = [];      // recent disagreeing estimates (see update())
+    this._weak = [];         // recent low-confidence estimates (fallback only)
+    this._trustRefT = null;  // time of the last trusted reading (or when we first started guessing)
+    this.trusted = false;    // was the latest reading trusted?
 
     this._beatT = null;      // time (s) of a beat on the current beat grid
     this._period = null;     // seconds per beat on that grid
@@ -56,6 +70,9 @@ class TempoTracker {
     this.confidence = 0;
     this.raw = null;
     this._pending = [];
+    this._weak = [];
+    this._trustRefT = null;
+    this.trusted = false;
     this._beatT = null;
     this._period = null;
   }
@@ -212,45 +229,83 @@ class TempoTracker {
   /**
    * Call a couple of times per second. Returns the smoothed state:
    *   playing    – is there sound right now?
-   *   bpm        – smoothed tempo (null until the first lock)
+   *   bpm        – tempo to use (null = no tempo known yet)
    *   raw        – latest unsmoothed estimate (for graphing)
-   *   confidence – 0..1
+   *   confidence – 0..1 for the latest reading
+   *   trusted    – false while the latest reading was too unsure to use (bpm is then "held")
    *   beatT      – time (same clock as push()) of a beat; null if unknown
    *   period     – seconds per beat; null if unknown
+   *
+   * Hold-last-tempo behaviour: when the beat disappears (a quiet intro, a breakdown) the
+   * readings become guesses. Instead of following them, we keep the last tempo we were sure
+   * about and keep the beat grid free-running, so the dancers stay in time for the drop.
    */
   update() {
     if (!this.playing) {
       // After a real gap, start fresh so the next song locks on quickly.
       if (this.lastT - this.lastLoudT > this.silenceHoldSec + 1) this.reset();
-      return { playing: false, bpm: this.bpm, raw: null, confidence: 0, beatT: null, period: null };
+      return { playing: false, bpm: this.bpm, raw: null, confidence: 0, trusted: false, beatT: null, period: null };
     }
 
     const est = this.estimate();
     if (est) {
       this.confidence = est.confidence;
       this.raw = est.bpm;
-      if (this.bpm === null) {
-        this.bpm = est.bpm; // first lock: take it immediately
-      } else if (Math.abs(est.bpm / this.bpm - 1) < 0.04) {
-        this.bpm += 0.3 * (est.bpm - this.bpm); // small drift: ease towards it
-        this._pending = [];
+      this.trusted = est.confidence >= TRUST_CONFIDENCE;
+
+      if (this.trusted) {
+        this._trustRefT = this.lastT;
+        this._weak = [];
+        this._acceptTrusted(est.bpm);
+        if (this.bpm !== null) this._updateBeatGrid(this.bpm);
       } else {
-        // Big change (new song? octave error?): only jump once it has been seen 3 times in a row.
-        this._pending.push(est.bpm);
-        if (this._pending.length > 4) this._pending.shift();
-        const p = this._pending;
-        if (p.length >= 3 && p.every((v) => Math.abs(v / p[p.length - 1] - 1) < 0.04)) {
-          this.bpm = p[p.length - 1];
-          this._pending = [];
-          this._beatT = null; // tempo changed, so the old beat grid is meaningless
+        if (this._trustRefT === null) this._trustRefT = this.lastT; // start the "no trusted reading" clock
+        const unsure = this.lastT - this._trustRefT;
+        if (this.bpm !== null && unsure > HOLD_MAX_SEC) {
+          // Held for too long: this is probably something new, so go back to "no tempo known".
+          this.bpm = null; this._beatT = null; this._period = null; this._pending = [];
+        } else if (this.bpm === null && unsure > FALLBACK_AFTER_SEC && est.confidence >= FALLBACK_MIN_CONFIDENCE) {
+          // Never found a clear beat: accept low-confidence readings if they agree with each other.
+          this._weak.push(est.bpm);
+          if (this._weak.length > 4) this._weak.shift();
+          const w = this._weak;
+          if (w.length >= 3 && w.every((v) => Math.abs(v / w[w.length - 1] - 1) < 0.04)) {
+            this.bpm = w[w.length - 1];
+            this._weak = [];
+            this._updateBeatGrid(this.bpm);
+          }
         }
       }
-      if (this.bpm !== null) this._updateBeatGrid(this.bpm);
     }
     return {
-      playing: true, bpm: this.bpm, raw: this.raw, confidence: this.confidence,
+      playing: true, bpm: this.bpm, raw: this.raw, confidence: this.confidence, trusted: this.trusted,
       beatT: this._beatT, period: this._period,
     };
+  }
+
+  /** Smooth a trusted estimate into the reported tempo. */
+  _acceptTrusted(bpm) {
+    if (this.bpm === null) {
+      // First lock: wait for two trusted readings in a row that agree, so one lucky blip
+      // of noise can't claim a tempo.
+      this._pending.push(bpm);
+      if (this._pending.length > 2) this._pending.shift();
+      const p = this._pending;
+      if (p.length === 2 && Math.abs(p[0] / p[1] - 1) < 0.04) { this.bpm = p[1]; this._pending = []; }
+    } else if (Math.abs(bpm / this.bpm - 1) < 0.04) {
+      this.bpm += 0.3 * (bpm - this.bpm); // small drift: ease towards it
+      this._pending = [];
+    } else {
+      // Big change (new song? octave error?): only jump once it has been seen 3 times in a row.
+      this._pending.push(bpm);
+      if (this._pending.length > 4) this._pending.shift();
+      const p = this._pending;
+      if (p.length >= 3 && p.every((v) => Math.abs(v / p[p.length - 1] - 1) < 0.04)) {
+        this.bpm = p[p.length - 1];
+        this._pending = [];
+        this._beatT = null; // tempo changed, so the old beat grid is meaningless
+      }
+    }
   }
 }
 

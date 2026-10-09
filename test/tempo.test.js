@@ -61,3 +61,33 @@ test('beat grid lines up with the kicks', () => {
   const off = ((st.beatT % beat) + beat) % beat;
   assert.ok(Math.min(off, beat - off) < 0.06, `grid off by ${off}`);
 });
+
+// A song shaped like an EDM track: beatless intro → beat at 124 → beatless breakdown → drop.
+test('holds the last confident tempo through beatless sections', () => {
+  let r = 3;
+  const rnd = () => ((r = (r * 1664525 + 1013904223) >>> 0) / 2 ** 32);
+  const beat = 60 / 124;
+  const sections = [
+    { until: 14, onset: () => 8 + rnd() * 5 },                                   // intro: pads/noise
+    { until: 30, onset: (t) => 20 * Math.exp(-((t % beat) / beat) * 25) + rnd() * 3 }, // beat
+    { until: 46, onset: () => 8 + rnd() * 5 },                                   // breakdown
+    { until: 60, onset: (t) => 20 * Math.exp(-((t % beat) / beat) * 25) + rnd() * 3 }, // drop
+  ];
+  const tr = new TempoTracker();
+  const seen = {}; // last state at the end of each section
+  let t = 0, s = 0, st;
+  while (t < 60) {
+    while (t >= sections[s].until) { seen[s] = st; s++; }
+    tr.push(t, sections[s].onset(t), 0.1);
+    t += 1 / 60;
+    if (Math.floor(t * 2) !== Math.floor((t - 1 / 60) * 2)) st = tr.update();
+  }
+  seen[3] = st;
+
+  assert.strictEqual(seen[0].bpm, null, 'no tempo should be claimed during a beatless intro');
+  assert.ok(Math.abs(seen[1].bpm / 124 - 1) < 0.02, `locks on the beat: ${seen[1].bpm}`);
+  assert.ok(Math.abs(seen[2].bpm / 124 - 1) < 0.02, `still ~124 after the breakdown: ${seen[2].bpm}`);
+  assert.strictEqual(seen[2].trusted, false, 'the breakdown reading should be flagged as held');
+  assert.ok(Math.abs(seen[3].bpm / 124 - 1) < 0.02, `and ~124 after the drop: ${seen[3].bpm}`);
+  assert.strictEqual(seen[3].trusted, true);
+});

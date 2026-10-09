@@ -100,7 +100,7 @@ function analysisTick() {
 }
 analysisTick();
 
-let shown = { playing: false, bpm: null }; // what the big BPM readout displays
+let shown = { playing: false, bpm: null, held: false }; // what the BPM readout / status show
 
 // 2×/s: ask the tracker for its smoothed result and send it to the mascots.
 setInterval(() => {
@@ -109,7 +109,7 @@ setInterval(() => {
   const bpm = manual ? state.settings.manualBpm : t.bpm;
 
   ipcRenderer.send('tempo', {
-    playing: t.playing && !!bpm,
+    playing: t.playing, // with no tempo known yet, mascots dance at their natural speed
     bpm: t.bpm,
     // Tracker time is performance.now()/1000; convert to epoch milliseconds so other windows
     // (which have their own performance clocks) can use it.
@@ -117,10 +117,12 @@ setInterval(() => {
     period: t.period,
   });
 
-  shown = { playing: t.playing, bpm: bpm ? bpm * (state.settings.octave || 1) : null };
+  // "held" = the beat is unclear right now, so we are keeping the last tempo we were sure of.
+  const held = !manual && t.playing && t.bpm !== null && !t.trusted;
+  shown = { playing: t.playing, bpm: bpm ? bpm * (state.settings.octave || 1) : null, held };
   renderStatus();
 
-  recordHistory({ t: Date.now(), playing: t.playing, applied: shown.bpm, raw: t.raw });
+  recordHistory({ t: Date.now(), playing: t.playing, applied: shown.bpm, raw: t.raw, held });
   drawGraph();
 }, 500);
 
@@ -141,6 +143,8 @@ function renderStatus() {
   dot.className = audioError ? 'err' : shown.playing ? 'on' : '';
   txt.textContent = audioError ? 'Audio error'
     : !mascotsVisible ? 'Idle — no mascots visible'
+    : shown.playing && shown.held ? 'Playing — beat unclear, holding tempo'
+    : shown.playing && !shown.bpm ? 'Playing — looking for the beat…'
     : shown.playing ? 'Playing'
     : analyser ? 'Silence — mascots paused' : 'No audio';
   txt.title = audioError || '';
@@ -198,15 +202,17 @@ function drawGraph() {
     if (p.raw) { gctx.beginPath(); gctx.arc(x(p.t), y(p.raw), 1.8, 0, Math.PI * 2); gctx.fill(); }
   }
 
-  // Tempo in use (line, broken at silences)
-  gctx.strokeStyle = css('--accent'); gctx.lineWidth = 2; gctx.beginPath();
-  let pen = false;
-  for (const p of history) {
-    if (!p.playing || !p.applied) { pen = false; continue; }
-    pen ? gctx.lineTo(x(p.t), y(p.applied)) : gctx.moveTo(x(p.t), y(p.applied));
-    pen = true;
+  // Tempo in use: solid line; dashed where the beat was unclear and the last tempo was held.
+  // Broken at silences.
+  gctx.strokeStyle = css('--accent'); gctx.lineWidth = 2;
+  for (let i = 1; i < history.length; i++) {
+    const a = history[i - 1], b = history[i];
+    if (!a.playing || !b.playing || !a.applied || !b.applied) continue;
+    gctx.setLineDash(b.held ? [4, 4] : []);
+    gctx.globalAlpha = b.held ? 0.6 : 1;
+    gctx.beginPath(); gctx.moveTo(x(a.t), y(a.applied)); gctx.lineTo(x(b.t), y(b.applied)); gctx.stroke();
   }
-  gctx.stroke();
+  gctx.setLineDash([]); gctx.globalAlpha = 1;
   gctx.lineWidth = 1;
 }
 $('graphBox').addEventListener('toggle', drawGraph);

@@ -122,9 +122,9 @@ const frameDelay = (f) => (f.delay <= 10 ? 100 : f.delay);
 function computeTargetRate() {
   if (!mascot || !settings || !tempo.playing) return 0;               // silence → freeze
   const bpm = settings.tempoMode === 'manual' ? settings.manualBpm : tempo.bpm;
-  if (!bpm) return 0;                                                  // no tempo detected yet
-  const r = foldedRate(bpm * settings.octave, mascot.baseBpm || 120, mascot.smart === true)
-    * (mascot.speed || 1) * (settings.globalSpeed || 1);
+  // No tempo known yet (e.g. a beatless intro): dance at the GIF's natural speed until one is found.
+  const tempoRate = bpm ? foldedRate(bpm * settings.octave, mascot.baseBpm || 120, mascot.smart === true) : 1;
+  const r = tempoRate * (mascot.speed || 1) * (settings.globalSpeed || 1);
   return Math.min(6, Math.max(0, r));
 }
 
