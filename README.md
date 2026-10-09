@@ -23,7 +23,7 @@ It works with Spotify, YouTube, games, anything that plays through your speakers
 - **Bounce on the beat** (optional): mascots pulse with every beat.
 - **Stays out of your way.** Lives in the system tray, can pause itself while a game or video is
   fullscreen, and can start with Windows.
-- **Light on your PC.** Uses very little CPU, and nothing while the music is off.
+- **Light on your PC.** Uses little CPU, and almost none while the music is off.
 - **Private.** No account, no internet connection, nothing is collected.
 
 ## Download
