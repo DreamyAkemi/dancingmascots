@@ -42,7 +42,7 @@ seconds to lock on after a song starts and glides between speeds. No sound for ~
 | Bounce on the beat | Squash-and-stretch pulse on every detected beat (with a strength slider) |
 | Per-mascot Speed | Multiplier for one GIF |
 | "Loop looks right at N BPM" | The tempo at which that GIF plays at its natural speed (default 120) |
-| ½/2× smart | Lets a GIF use half/double time if that keeps it closer to its natural speed |
+| Auto half/double speed | Off by default. When on, a GIF plays at half or double speed if that keeps it closer to its natural speed (so a 180 BPM song plays like 90 BPM on a 120 BPM GIF) |
 
 System audio capture (WASAPI loopback) works out of the box on Windows 11 and follows your default output device.
 If it ever fails, pick "Stereo Mix" or a virtual cable as the audio source.

@@ -288,7 +288,7 @@ function mascotCard(m) {
   const base = el('input', { class: 'base', type: 'number', min: 30, max: 300, value: Number(m.baseBpm) || 120 });
   base.onchange = () => updateMascot(m.id, { baseBpm: Math.min(300, Math.max(30, +base.value || 120)) });
 
-  const smart = el('input', { type: 'checkbox', checked: m.smart !== false });
+  const smart = el('input', { type: 'checkbox', checked: m.smart === true });
   smart.onchange = () => updateMascot(m.id, { smart: smart.checked });
   const flip = el('input', { type: 'checkbox', checked: !!m.flip });
   flip.onchange = () => updateMascot(m.id, { flip: flip.checked });
@@ -300,7 +300,9 @@ function mascotCard(m) {
     el('div', { class: 'ctl' }, [
       'Speed ', slider, out,
       ' Loop looks right at ', base, ' BPM',
-      el('label', {}, [smart, ' ½/2× smart']),
+      el('label', {
+        title: 'When the song is much faster or slower than this GIF\'s natural tempo, play the GIF at half or double speed instead of an extreme one (e.g. a 180 BPM song would play like 90 BPM). Off = the GIF always follows the tempo exactly.',
+      }, [smart, ' Auto half/double speed']),
       el('label', {}, [flip, ' flip']),
     ]),
   );

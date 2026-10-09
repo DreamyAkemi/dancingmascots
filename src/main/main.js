@@ -124,7 +124,7 @@ function sanitizeMascot(src) {
     y: isNum(src.y) ? Math.round(src.y) : 160,
     w: isNum(src.w) ? clamp(Math.round(src.w), 0, 4000) : 0, // 0 = "pick a size on first load"
     h: isNum(src.h) ? clamp(Math.round(src.h), 0, 4000) : 0,
-    baseBpm: 120, speed: 1, smart: true, flip: false,
+    baseBpm: 120, speed: 1, smart: false, flip: false,
     ...sanitizeMascotPatch(src),
   };
 }
@@ -303,7 +303,7 @@ function addMascots(paths) {
       path: p, enabled: true,
       x: 120 + (n % 6) * 90, y: 160 + (n % 4) * 60,
       w: 0, h: 0, // 0 = overlay picks a size from the GIF once it has loaded
-      baseBpm: 120, speed: 1, smart: true, flip: false,
+      baseBpm: 120, speed: 1, smart: false, flip: false,
     };
     config.mascots.push(m);
     openOverlay(m);

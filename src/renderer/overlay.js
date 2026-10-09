@@ -123,7 +123,7 @@ function computeTargetRate() {
   if (!mascot || !settings || !tempo.playing) return 0;               // silence → freeze
   const bpm = settings.tempoMode === 'manual' ? settings.manualBpm : tempo.bpm;
   if (!bpm) return 0;                                                  // no tempo detected yet
-  const r = foldedRate(bpm * settings.octave, mascot.baseBpm || 120, mascot.smart !== false)
+  const r = foldedRate(bpm * settings.octave, mascot.baseBpm || 120, mascot.smart === true)
     * (mascot.speed || 1) * (settings.globalSpeed || 1);
   return Math.min(6, Math.max(0, r));
 }
