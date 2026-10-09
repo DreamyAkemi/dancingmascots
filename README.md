@@ -12,6 +12,14 @@ npm start
 
 Built for Windows 10/11 (Electron). Needs [Node.js](https://nodejs.org) installed. A tray icon keeps it running when you close the panel.
 
+## Get the .exe (no Node needed)
+
+Every push builds Windows installers via GitHub Actions: open the repo's **Actions** tab, pick the latest
+run and download `DancingMascots-windows` (an installer and a portable `.exe`). Pushing a tag like `v0.1.0`
+also attaches them to a GitHub Release. To build locally on Windows: `npm run dist` (output in `dist/`).
+
+The installer isn't code-signed, so Windows SmartScreen will say "Unknown publisher": click *More info → Run anyway*.
+
 ## Using it
 
 - **Add GIFs:** drop `.gif` files on the panel or click **+ Add GIFs**. Each toggle (**On/Off**) loads / unloads
