@@ -1,0 +1,17 @@
+{
+  "name": "dancingmascots",
+  "version": "0.1.0",
+  "description": "Desktop overlay mascots that dance to the tempo of whatever you're listening to",
+  "main": "src/main/main.js",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "gifuct-js": "^2.1.2"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0"
+  },
+  "license": "MIT"
+}
