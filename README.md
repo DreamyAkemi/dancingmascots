@@ -3,6 +3,8 @@
 Looping GIFs that dance on your desktop as always-on-top overlays, and speed up / slow down with the
 tempo of whatever you're playing. Silence pauses them.
 
+<img width="473" height="434" alt="dancingmascots" src="https://github.com/user-attachments/assets/940705ea-c26d-4476-880e-3e113505bcf5" />
+
 ## Run
 
 ```
