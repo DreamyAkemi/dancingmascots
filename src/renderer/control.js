@@ -235,6 +235,7 @@ function render() {
   $('pauseFs').disabled = !state.fullscreenSupported;
   $('fsHint').hidden = !!state.fullscreenSupported;
   $('login').checked = !!s.launchAtLogin;
+  $('onTop').checked = !!s.alwaysOnTop;
   for (const b of $('octave').children) b.classList.toggle('on', +b.dataset.v === s.octave);
   if ($('audioSource').value !== s.audioSource && !$('audioSource').matches(':focus')) $('audioSource').value = s.audioSource;
   renderStatus();
@@ -368,6 +369,7 @@ $('globalSpeed').oninput = (e) => {
 $('locked').onchange = (e) => update({ locked: e.target.checked });
 $('bounce').onchange = (e) => update({ bounce: e.target.checked });
 $('pauseFs').onchange = (e) => update({ pauseOnFullscreen: e.target.checked });
+$('onTop').onchange = (e) => update({ alwaysOnTop: e.target.checked });
 $('login').onchange = (e) => update({ launchAtLogin: e.target.checked });
 $('bounceStrength').oninput = (e) => update({ bounceStrength: +e.target.value });
 for (const b of $('octave').children) b.onclick = () => update({ octave: +b.dataset.v });

@@ -55,6 +55,8 @@ If it ever fails, pick "Stereo Mix" or a virtual cable as the audio source.
 
 - **Pause & hide while another app is fullscreen** (default on): per monitor, so mascots on your second
   screen keep dancing while a game runs on the first. Uses the foreground window's size + lack of title bar.
+- **Keep mascots above other windows** (default on): turn it off and they behave like normal windows that
+  other windows can cover.
 - **Launch at Windows startup:** starts hidden in the tray (installed or portable build).
 - **Tempo history:** a collapsible graph of the last 3 minutes (tempo in use, raw detections, silences).
 - **Multi-monitor:** drag mascots anywhere; right-click → *Move to monitor*. If a monitor is unplugged,

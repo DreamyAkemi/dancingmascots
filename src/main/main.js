@@ -47,6 +47,7 @@ const DEFAULT_SETTINGS = {
   bounceStrength: 0.5,     // 0..1
   pauseOnFullscreen: true, // pause + hide mascots on a monitor while another app is fullscreen there
   launchAtLogin: false,    // start with Windows (hidden in the tray)
+  alwaysOnTop: true,       // true = mascots stay above other windows; false = behave like a normal window
 };
 
 // ───────────────────────────── State ─────────────────────────────
@@ -95,6 +96,7 @@ function sanitizeSettings(src) {
   if (isNum(src.bounceStrength)) out.bounceStrength = clamp(src.bounceStrength, 0, 1);
   if (typeof src.pauseOnFullscreen === 'boolean') out.pauseOnFullscreen = src.pauseOnFullscreen;
   if (typeof src.launchAtLogin === 'boolean') out.launchAtLogin = src.launchAtLogin;
+  if (typeof src.alwaysOnTop === 'boolean') out.alwaysOnTop = src.alwaysOnTop;
   return out;
 }
 
@@ -180,7 +182,7 @@ function openOverlay(m) {
     minWidth: 40, minHeight: 40,
     transparent: true, frame: false, hasShadow: false, backgroundColor: '#00000000',
     resizable: false,          // we implement resizing ourselves (see drag:* handlers)
-    alwaysOnTop: true, skipTaskbar: true,
+    skipTaskbar: true,
     webPreferences: {
       nodeIntegration: true,   // overlay.js reads the GIF from disk. Only OUR local pages are ever loaded.
       contextIsolation: false,
@@ -189,7 +191,7 @@ function openOverlay(m) {
     },
   });
   lockDownNavigation(win);
-  win.setAlwaysOnTop(true, 'screen-saver'); // stay above fullscreen-ish windows
+  applyStacking(win);
   win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   win.setIgnoreMouseEvents(config.settings.locked); // click-through when locked
   win.loadFile(path.join(__dirname, '../renderer/overlay.html'));
@@ -197,6 +199,15 @@ function openOverlay(m) {
   overlays.set(m.id, win);
   ensureOnScreen(win, m.id);
   applyFullscreen();
+}
+
+/**
+ * "Always on top" on: the mascot floats above every other window (the high 'screen-saver' level).
+ * Off: it is an ordinary window, so other windows can cover it (clicking it brings it forward).
+ */
+function applyStacking(win) {
+  if (config.settings.alwaysOnTop) win.setAlwaysOnTop(true, 'screen-saver');
+  else win.setAlwaysOnTop(false);
 }
 
 function closeOverlay(id) {
@@ -368,6 +379,7 @@ ipcMain.on('settings:update', (_e, rawPatch) => {
   const patch = sanitizeSettings(rawPatch);
   Object.assign(config.settings, patch);
   if ('locked' in patch) for (const w of overlays.values()) w.setIgnoreMouseEvents(config.settings.locked);
+  if ('alwaysOnTop' in patch) for (const w of overlays.values()) if (!w.isDestroyed()) applyStacking(w);
   if ('pauseOnFullscreen' in patch) applyFullscreen();
   if ('launchAtLogin' in patch) applyLoginItem();
   broadcast('settings', config.settings);
