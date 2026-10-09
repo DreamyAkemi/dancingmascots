@@ -1,7 +1,7 @@
 'use strict';
 const { ipcRenderer } = require('electron');
 const fs = require('fs');
-const { parseGIF, decompressFrames } = require('gifuct-js');
+const { parseGIF, decompressFrame } = require('gifuct-js');
 const { foldedRate } = require('../shared/tempo');
 
 const view = document.getElementById('view');
@@ -9,7 +9,10 @@ const vctx = view.getContext('2d');
 const grip = document.getElementById('grip');
 
 let mascot = null, settings = null, tempo = { playing: false, bpm: null };
-let frames = [], cur = 0, acc = 0;
+let frames = [], raw = [], gct = null, cur = 0, acc = 0;
+// Decoded RGBA patches are big (frames x w x h x 4), so only cache them when the whole loop is small.
+const CACHE_BYTES = 24 * 1024 * 1024;
+let patchCache = null;
 let targetRate = 0, rate = 0; // rate = playback speed multiplier relative to the gif's own timing
 
 // Compositing state for the gif's frame disposal rules.
@@ -22,13 +25,27 @@ let restore = null;
 function load(path) {
   const buf = fs.readFileSync(path);
   const gif = parseGIF(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength));
-  frames = decompressFrames(gif, true);
+  gct = gif.gct;
+  raw = gif.frames.filter((f) => f.image);
+  // Keep only lightweight metadata per frame; pixels are decoded on demand while playing.
+  frames = raw.map((f) => {
+    const { dims, disposalType, delay } = decompressFrame(f, gct, false);
+    return { dims, disposalType, delay };
+  });
   const { width, height } = gif.lsd;
+  patchCache = frames.length * width * height * 4 <= CACHE_BYTES ? new Map() : null;
   canvas.width = view.width = width;
   canvas.height = view.height = height;
   ipcRenderer.send('overlay:aspect', width / height, width);
   cur = 0; acc = 0; restore = null;
   drawFrame(0);
+}
+
+function getPatch(i) {
+  if (patchCache && patchCache.has(i)) return patchCache.get(i);
+  const { patch } = decompressFrame(raw[i], gct, true);
+  if (patchCache) patchCache.set(i, patch);
+  return patch;
 }
 
 function drawFrame(i) {
@@ -40,7 +57,7 @@ function drawFrame(i) {
   if (f.disposalType === 3) restore = ctx.getImageData(0, 0, canvas.width, canvas.height);
   const { width, height, left, top } = f.dims;
   patchCanvas.width = width; patchCanvas.height = height;
-  patchCtx.putImageData(new ImageData(f.patch, width, height), 0, 0);
+  patchCtx.putImageData(new ImageData(getPatch(i), width, height), 0, 0);
   ctx.drawImage(patchCanvas, left, top);
   vctx.clearRect(0, 0, view.width, view.height);
   vctx.drawImage(canvas, 0, 0);

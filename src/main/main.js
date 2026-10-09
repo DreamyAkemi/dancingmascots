@@ -41,10 +41,18 @@ function saveConfig() {
   }, 200);
 }
 const find = (id) => config.mascots.find((m) => m.id === id);
+const thumbs = new Map(); // mascot id -> small static data URL
+function thumbOf(m) {
+  if (!thumbs.has(m.id)) {
+    const img = nativeImage.createFromPath(m.path);
+    thumbs.set(m.id, img.isEmpty() ? '' : img.resize({ height: 64 }).toDataURL());
+  }
+  return thumbs.get(m.id);
+}
 function publicState() {
   return {
     settings: config.settings,
-    mascots: config.mascots.map((m) => ({ ...m, missing: !fs.existsSync(m.path) })),
+    mascots: config.mascots.map((m) => ({ ...m, missing: !fs.existsSync(m.path), thumb: thumbOf(m) })),
   };
 }
 function pushState() {
@@ -243,6 +251,7 @@ function createControl() {
     },
   });
   controlWin.loadFile(path.join(__dirname, '../renderer/control.html'));
+  controlWin.on('minimize', (e) => { e.preventDefault(); controlWin.hide(); }); // minimize to tray, not taskbar
   controlWin.on('close', (e) => {
     if (!quitting) { e.preventDefault(); controlWin.hide(); } // keep analysing audio in the tray
   });

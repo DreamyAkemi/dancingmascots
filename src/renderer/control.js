@@ -111,7 +111,7 @@ function render() {
 function mascotCard(m) {
   const el = document.createElement('div');
   el.className = `mascot${m.enabled ? '' : ' off'}${m.missing ? ' missing' : ''}`;
-  const src = encodeURI('file://' + (m.path.startsWith('/') ? '' : '/') + m.path.replace(/\\/g, '/')).replace(/#/g, '%23');
+  const src = m.thumb || '';
   el.innerHTML = `
     <img class="thumb" src="${src}">
     <div class="name"></div>
