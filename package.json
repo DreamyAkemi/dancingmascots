@@ -9,7 +9,8 @@
     "dist": "electron-builder --win --publish never"
   },
   "dependencies": {
-    "gifuct-js": "^2.1.2"
+    "gifuct-js": "^2.1.2",
+    "koffi": "2.9.2"
   },
   "devDependencies": {
     "electron": "^33.2.0",
@@ -22,9 +23,12 @@
     "productName": "Dancing Mascots",
     "files": [
       "src/**/*",
-      "assets/**/*",
+      "assets/icon.png",
+      "package.json",
       "node_modules/**/*",
-      "package.json"
+      "!node_modules/koffi/build/koffi/{darwin_*,freebsd_*,linux_*,musl_*,openbsd_*,win32_arm64,win32_ia32}",
+      "!node_modules/koffi/{doc,src,vendor,CHANGELOG.md}",
+      "!node_modules/gifuct-js/demo"
     ],
     "win": {
       "target": [
@@ -36,6 +40,10 @@
     "nsis": {
       "oneClick": true,
       "perMachine": false
-    }
+    },
+    "compression": "maximum",
+    "electronLanguages": [
+      "en-US"
+    ]
   }
 }

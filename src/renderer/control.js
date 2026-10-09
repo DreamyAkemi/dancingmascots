@@ -68,19 +68,37 @@ function stopAudio() {
   stream = audioCtx = analyser = source = null;
 }
 
-// ~60×/s: measure loudness + how much new sound energy appeared, and feed the tracker.
-setInterval(() => {
-  if (!analyser) return;
-  analyser.getFloatFrequencyData(freq);
-  analyser.getFloatTimeDomainData(wave);
+// How the analysis loop spends CPU:
+//   • nobody can see a mascot (all hidden/unloaded) → do nothing, wake once a second
+//   • silence                                       → peek at the loudness 5×/s
+//   • music playing                                 → full analysis ~60×/s
+let mascotsVisible = true; // main process tells us (see 'activity' message below)
 
-  let sum = 0;
-  for (let i = 0; i < wave.length; i++) sum += wave[i] * wave[i];
-  const rms = Math.sqrt(sum / wave.length); // loudness
+function analysisTick() {
+  let delay = 1000;
+  if (analyser && mascotsVisible) {
+    analyser.getFloatTimeDomainData(wave);
+    let sum = 0;
+    for (let i = 0; i < wave.length; i++) sum += wave[i] * wave[i];
+    const rms = Math.sqrt(sum / wave.length); // loudness
+    const t = performance.now() / 1000;
 
-  tracker.push(performance.now() / 1000, spectralFlux(prevFreq, freq, 190), rms);
-  prevFreq.set(freq);
-}, 16);
+    if (tracker.playing || rms >= tracker.silenceLevel) {
+      // Music: measure how much new sound energy appeared (spectral flux) and feed the tracker.
+      analyser.getFloatFrequencyData(freq);
+      tracker.push(t, spectralFlux(prevFreq, freq, 190), rms);
+      prevFreq.set(freq);
+      delay = 16;
+    } else {
+      // Silence: just record that it is quiet; skip the expensive spectrum work.
+      tracker.push(t, 0, rms);
+      prevFreq.fill(-100);
+      delay = 200;
+    }
+  }
+  setTimeout(analysisTick, delay);
+}
+analysisTick();
 
 let shown = { playing: false, bpm: null }; // what the big BPM readout displays
 
@@ -101,6 +119,9 @@ setInterval(() => {
 
   shown = { playing: t.playing, bpm: bpm ? bpm * (state.settings.octave || 1) : null };
   renderStatus();
+
+  recordHistory({ t: Date.now(), playing: t.playing, applied: shown.bpm, raw: t.raw });
+  drawGraph();
 }, 500);
 
 // ═════════════════════════════ 2. UI ═════════════════════════════
@@ -118,9 +139,77 @@ function renderStatus() {
   $('bpmValue').textContent = shown.bpm ? Math.round(shown.bpm) : '--';
   const dot = $('dot'), txt = $('statusText');
   dot.className = audioError ? 'err' : shown.playing ? 'on' : '';
-  txt.textContent = audioError ? 'Audio error' : shown.playing ? 'Playing' : analyser ? 'Silence — mascots paused' : 'No audio';
+  txt.textContent = audioError ? 'Audio error'
+    : !mascotsVisible ? 'Idle — no mascots visible'
+    : shown.playing ? 'Playing'
+    : analyser ? 'Silence — mascots paused' : 'No audio';
   txt.title = audioError || '';
 }
+
+// ───── Tempo history graph ─────
+// Keeps ~3 minutes of readings (one every 0.5 s) and draws them: the solid line is the tempo the
+// mascots are using, dots are the detector's raw guesses, and shaded gaps mean silence. A wandering
+// line or scattered dots means the detector is unsure; a flat line means it is locked on.
+const HISTORY_MS = 3 * 60 * 1000;
+const history = [];
+const graph = $('graph');
+const gctx = graph.getContext('2d');
+const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+
+function recordHistory(sample) {
+  history.push(sample);
+  while (history.length && sample.t - history[0].t > HISTORY_MS) history.shift();
+}
+
+function drawGraph() {
+  // Skip the work when the panel is hidden or the section is collapsed.
+  if (document.hidden || !$('graphBox').open) return;
+
+  const dpr = window.devicePixelRatio || 1;
+  const w = graph.clientWidth, h = graph.clientHeight;
+  if (graph.width !== Math.round(w * dpr)) { graph.width = Math.round(w * dpr); graph.height = Math.round(h * dpr); }
+  gctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  gctx.clearRect(0, 0, w, h);
+
+  const pad = { l: 34, r: 6, t: 6, b: 16 };
+  const lo = 60, hi = 190; // BPM range shown
+  const x = (t) => pad.l + ((t - (Date.now() - HISTORY_MS)) / HISTORY_MS) * (w - pad.l - pad.r);
+  const y = (bpm) => pad.t + (1 - (Math.min(hi, Math.max(lo, bpm)) - lo) / (hi - lo)) * (h - pad.t - pad.b);
+
+  // Grid + labels
+  gctx.font = '10px system-ui'; gctx.textBaseline = 'middle';
+  for (let bpm = 80; bpm <= 180; bpm += 20) {
+    gctx.strokeStyle = css('--line'); gctx.beginPath();
+    gctx.moveTo(pad.l, y(bpm)); gctx.lineTo(w - pad.r, y(bpm)); gctx.stroke();
+    gctx.fillStyle = css('--dim'); gctx.fillText(String(bpm), 4, y(bpm));
+  }
+  gctx.textBaseline = 'alphabetic';
+  gctx.fillText('-3 min', pad.l, h - 3); gctx.fillText('now', w - pad.r - 20, h - 3);
+
+  // Silence shading
+  gctx.fillStyle = 'rgba(255,255,255,0.05)';
+  history.forEach((p) => {
+    if (!p.playing) gctx.fillRect(x(p.t) - 2, pad.t, 4, h - pad.t - pad.b);
+  });
+
+  // Raw detector guesses (dots)
+  gctx.fillStyle = 'rgba(140,138,160,0.8)';
+  for (const p of history) {
+    if (p.raw) { gctx.beginPath(); gctx.arc(x(p.t), y(p.raw), 1.8, 0, Math.PI * 2); gctx.fill(); }
+  }
+
+  // Tempo in use (line, broken at silences)
+  gctx.strokeStyle = css('--accent'); gctx.lineWidth = 2; gctx.beginPath();
+  let pen = false;
+  for (const p of history) {
+    if (!p.playing || !p.applied) { pen = false; continue; }
+    pen ? gctx.lineTo(x(p.t), y(p.applied)) : gctx.moveTo(x(p.t), y(p.applied));
+    pen = true;
+  }
+  gctx.stroke();
+  gctx.lineWidth = 1;
+}
+$('graphBox').addEventListener('toggle', drawGraph);
 
 let lastKey = ''; // fingerprint of the mascot list structure (see render)
 
@@ -136,6 +225,10 @@ function render() {
   $('bounce').checked = !!s.bounce;
   $('bounceStrength').value = s.bounceStrength;
   $('bounceStrength').disabled = !s.bounce;
+  $('pauseFs').checked = !!s.pauseOnFullscreen;
+  $('pauseFs').disabled = !state.fullscreenSupported;
+  $('fsHint').hidden = !!state.fullscreenSupported;
+  $('login').checked = !!s.launchAtLogin;
   for (const b of $('octave').children) b.classList.toggle('on', +b.dataset.v === s.octave);
   if ($('audioSource').value !== s.audioSource && !$('audioSource').matches(':focus')) $('audioSource').value = s.audioSource;
   renderStatus();
@@ -266,6 +359,8 @@ $('globalSpeed').oninput = (e) => {
 };
 $('locked').onchange = (e) => update({ locked: e.target.checked });
 $('bounce').onchange = (e) => update({ bounce: e.target.checked });
+$('pauseFs').onchange = (e) => update({ pauseOnFullscreen: e.target.checked });
+$('login').onchange = (e) => update({ launchAtLogin: e.target.checked });
 $('bounceStrength').oninput = (e) => update({ bounceStrength: +e.target.value });
 for (const b of $('octave').children) b.onclick = () => update({ octave: +b.dataset.v });
 $('add').onclick = () => ipcRenderer.invoke('mascot:pick');
@@ -297,6 +392,9 @@ window.addEventListener('drop', (e) => {
 
 // The main process pushes a fresh snapshot whenever the library or settings change.
 ipcRenderer.on('state', (_e, s) => { state = s; render(); });
+
+// Main tells us whether any mascot is currently visible (see analysisTick).
+ipcRenderer.on('activity', (_e, needed) => { mascotsVisible = needed; renderStatus(); });
 
 // ───── Startup ─────
 (async () => {

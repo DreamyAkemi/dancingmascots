@@ -18,8 +18,14 @@ const path = require('path');
 const fs = require('fs');
 const {
   app, BrowserWindow, ipcMain, dialog, Menu, Tray, nativeImage,
-  desktopCapturer, session,
+  desktopCapturer, session, screen,
 } = require('electron');
+const { watchFullscreen } = require('./fullscreen');
+
+// Let all our windows share ONE renderer process instead of one process per window.
+// Measured with 7 mascots: ~1.8 GB per-window vs ~0.6 GB shared. Overlays only do light canvas
+// drawing, so sharing a process costs nothing noticeable.
+app.commandLine.appendSwitch('process-per-site');
 
 // ───────────────────────────── Constants ─────────────────────────────
 
@@ -39,6 +45,8 @@ const DEFAULT_SETTINGS = {
   locked: false,           // true = overlays are click-through
   bounce: false,           // squash-and-stretch pulse on every beat
   bounceStrength: 0.5,     // 0..1
+  pauseOnFullscreen: true, // pause + hide mascots on a monitor while another app is fullscreen there
+  launchAtLogin: false,    // start with Windows (hidden in the tray)
 };
 
 // ───────────────────────────── State ─────────────────────────────
@@ -49,6 +57,8 @@ let tray = null;                  // system tray icon
 let quitting = false;             // true once the user really chose Quit
 let tempo = { playing: false, bpm: null, beat: null, period: null }; // latest from control panel
 const overlays = new Map();       // mascot id -> its overlay BrowserWindow
+let fullscreenDisplayId = null;   // id of the display a foreign app is fullscreen on (or null)
+let fullscreenWatcher = { supported: false };
 
 // ───────────────────────────── Validation helpers ─────────────────────────────
 // The renderer windows run with Node integration (they read GIF files directly), so anything
@@ -83,6 +93,8 @@ function sanitizeSettings(src) {
   if (typeof src.locked === 'boolean') out.locked = src.locked;
   if (typeof src.bounce === 'boolean') out.bounce = src.bounce;
   if (isNum(src.bounceStrength)) out.bounceStrength = clamp(src.bounceStrength, 0, 1);
+  if (typeof src.pauseOnFullscreen === 'boolean') out.pauseOnFullscreen = src.pauseOnFullscreen;
+  if (typeof src.launchAtLogin === 'boolean') out.launchAtLogin = src.launchAtLogin;
   return out;
 }
 
@@ -145,6 +157,7 @@ const findMascot = (id) => config.mascots.find((m) => m.id === id);
 function publicState() {
   return {
     settings: config.settings,
+    fullscreenSupported: !!fullscreenWatcher.supported,
     mascots: config.mascots.map((m) => ({ ...m, missing: !fs.existsSync(m.path) })),
   };
 }
@@ -180,14 +193,70 @@ function openOverlay(m) {
   win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   win.setIgnoreMouseEvents(config.settings.locked); // click-through when locked
   win.loadFile(path.join(__dirname, '../renderer/overlay.html'));
-  win.on('closed', () => overlays.delete(m.id));
+  win.on('closed', () => { overlays.delete(m.id); updateActivity(); });
   overlays.set(m.id, win);
+  ensureOnScreen(win, m.id);
+  applyFullscreen();
 }
 
 function closeOverlay(id) {
   const win = overlays.get(id);
   if (win && !win.isDestroyed()) win.close();
   overlays.delete(id);
+  updateActivity();
+}
+
+// ───────────────────────────── Multi-monitor + fullscreen handling ─────────────────────────────
+
+/** Is this overlay window at least partly (40×40 px) on some connected display? */
+function isOnAnyDisplay(b) {
+  return screen.getAllDisplays().some((d) => {
+    const w = Math.min(b.x + b.width, d.bounds.x + d.bounds.width) - Math.max(b.x, d.bounds.x);
+    const h = Math.min(b.y + b.height, d.bounds.y + d.bounds.height) - Math.max(b.y, d.bounds.y);
+    return w >= 40 && h >= 40;
+  });
+}
+
+/** Move a window onto `display` (top-left area of its work area, i.e. clear of the taskbar). */
+function moveToDisplay(win, display, id) {
+  const wa = display.workArea, b = win.getBounds();
+  win.setBounds({ x: wa.x + 80, y: wa.y + 80, width: b.width, height: b.height });
+  if (id) saveBounds(id);
+  applyFullscreen();
+}
+
+/** If a monitor was unplugged (or the layout changed) and a mascot is stranded off-screen, bring it back. */
+function ensureOnScreen(win, id) {
+  if (!win.isDestroyed() && !isOnAnyDisplay(win.getBounds())) moveToDisplay(win, screen.getPrimaryDisplay(), id);
+}
+
+/**
+ * Pause + hide the mascots that sit on a monitor where another app is fullscreen
+ * (only if the "pause on fullscreen" option is on). Mascots on other monitors keep dancing.
+ */
+function isPausedByFullscreen(win) {
+  return config.settings.pauseOnFullscreen && fullscreenDisplayId !== null
+    && screen.getDisplayMatching(win.getBounds()).id === fullscreenDisplayId;
+}
+
+function applyFullscreen() {
+  for (const win of overlays.values()) {
+    if (win.isDestroyed()) continue;
+    const paused = isPausedByFullscreen(win);
+    if (paused && win.isVisible()) win.hide();
+    if (!paused && !win.isVisible()) win.showInactive();
+    win.webContents.send('paused', paused); // lets the overlay stop its animation loop to save CPU
+  }
+  updateActivity();
+}
+
+/**
+ * Tell the control panel whether anyone is watching. With no visible mascots there is no point
+ * analysing the audio, so the panel drops to a very cheap idle mode.
+ */
+function updateActivity() {
+  const needed = [...overlays.values()].some((w) => !w.isDestroyed() && w.isVisible());
+  if (controlWin && !controlWin.isDestroyed()) controlWin.webContents.send('activity', needed);
 }
 
 /** Send a message to every open overlay. */
@@ -283,12 +352,14 @@ ipcMain.on('mascot:remove', (_e, id) => {
   pushState();
 });
 
-// "Reset positions": line everything up at the default spots (useful if a mascot ends up off-screen).
-ipcMain.on('mascot:reset-positions', () => {
+// "Reset positions": line everything up at the default spots on the main monitor.
+ipcMain.on('mascot:reset-positions', () => { // everything back onto the primary monitor
   config.mascots.forEach((m, i) => {
     const win = overlays.get(m.id);
-    if (win && !win.isDestroyed()) win.setPosition(120 + (i % 6) * 90, 160 + (i % 4) * 60);
-    saveBounds(m.id);
+    const wa = screen.getPrimaryDisplay().workArea;
+    const x = wa.x + 120 + (i % 6) * 90, y = wa.y + 160 + (i % 4) * 60;
+    if (win && !win.isDestroyed()) { win.setPosition(x, y); saveBounds(m.id); } else Object.assign(m, { x, y });
+    saveConfig();
   });
 });
 
@@ -297,6 +368,8 @@ ipcMain.on('settings:update', (_e, rawPatch) => {
   const patch = sanitizeSettings(rawPatch);
   Object.assign(config.settings, patch);
   if ('locked' in patch) for (const w of overlays.values()) w.setIgnoreMouseEvents(config.settings.locked);
+  if ('pauseOnFullscreen' in patch) applyFullscreen();
+  if ('launchAtLogin' in patch) applyLoginItem();
   broadcast('settings', config.settings);
   saveConfig();
   pushState();
@@ -318,8 +391,8 @@ ipcMain.on('tempo', (_e, t) => {
 
 // An overlay asks for its starting data.
 ipcMain.handle('overlay:init', (e) => {
-  const m = findMascot(overlayIdOf(e.sender));
-  return m ? { mascot: m, settings: config.settings, tempo } : null;
+  const id = overlayIdOf(e.sender), m = findMascot(id);
+  return m ? { mascot: m, settings: config.settings, tempo, paused: isPausedByFullscreen(overlays.get(id)) } : null;
 });
 
 // The overlay tells us the GIF's size/aspect ratio once it has decoded it.
@@ -354,7 +427,12 @@ ipcMain.on('drag:move', (_e, { sx, sy } = {}) => {
   if (!drag || drag.win.isDestroyed() || !isNum(sx) || !isNum(sy)) return;
   const { b } = drag, dx = sx - drag.sx, dy = sy - drag.sy;
   if (drag.mode === 'move') {
-    drag.win.setBounds({ x: Math.round(b.x + dx), y: Math.round(b.y + dy), width: b.width, height: b.height });
+    const x = Math.round(b.x + dx), y = Math.round(b.y + dy);
+    drag.win.setBounds({ x, y, width: b.width, height: b.height });
+    // Windows can resize a window when it crosses between monitors with different display
+    // scaling. If that happened, put the size back.
+    const now = drag.win.getBounds();
+    if (now.width !== b.width || now.height !== b.height) drag.win.setBounds({ x, y, width: b.width, height: b.height });
   } else { // resize from the bottom-right grip, keeping the GIF's proportions
     const width = clamp(Math.round(b.width + Math.max(dx, dy * drag.aspect)), 50, 1600);
     drag.win.setBounds({ x: b.x, y: b.y, width, height: Math.round(width / drag.aspect) });
@@ -362,7 +440,7 @@ ipcMain.on('drag:move', (_e, { sx, sy } = {}) => {
 });
 
 ipcMain.on('drag:end', () => {
-  if (drag) saveBounds(drag.id);
+  if (drag) { saveBounds(drag.id); applyFullscreen(); } // it may now sit on a different monitor
   drag = null;
 });
 
@@ -393,6 +471,13 @@ ipcMain.on('overlay:menu', (e) => {
     { label: 'Speed ×1', click: () => set({ speed: 1 }) },
     { label: 'Speed ×0.5', click: () => set({ speed: 0.5 }) },
     { label: 'Speed ×2', click: () => set({ speed: 2 }) },
+    ...(screen.getAllDisplays().length > 1 ? [{
+      label: 'Move to monitor',
+      submenu: screen.getAllDisplays().map((d, i) => ({
+        label: `Monitor ${i + 1}${d.id === screen.getPrimaryDisplay().id ? ' (main)' : ''} — ${d.size.width}×${d.size.height}`,
+        click: () => moveToDisplay(overlays.get(id), d, id),
+      })),
+    }] : []),
     { type: 'separator' },
     { label: 'Lock all (click-through)', click: () => ipcMain.emit('settings:update', null, { locked: true }) },
     { label: 'Unload', click: () => ipcMain.emit('mascot:update', null, id, { enabled: false }) },
@@ -403,7 +488,8 @@ ipcMain.on('overlay:menu', (e) => {
 
 function createControl() {
   controlWin = new BrowserWindow({
-    width: 480, height: 800, minWidth: 400, title: 'Dancing Mascots',
+    width: 480, height: 900, minWidth: 400, title: 'Dancing Mascots',
+    show: !process.argv.includes('--hidden'), // "launch at login" starts hidden in the tray
     backgroundColor: '#14141a', autoHideMenuBar: true,
     webPreferences: {
       nodeIntegration: true,   // control.js reads GIFs for thumbnails; only our local page is loaded
@@ -414,6 +500,7 @@ function createControl() {
   });
   lockDownNavigation(controlWin);
   controlWin.loadFile(path.join(__dirname, '../renderer/control.html'));
+  controlWin.webContents.on('did-finish-load', updateActivity);
 
   // Minimize and close both just hide the window to the tray; the app keeps running.
   controlWin.on('minimize', (e) => { e.preventDefault(); controlWin.hide(); });
@@ -439,6 +526,19 @@ function updateTrayMenu() {
     { type: 'separator' },
     { label: 'Quit', click: () => { quitting = true; app.quit(); } },
   ]));
+}
+
+// ───────────────────────────── Launch at login ─────────────────────────────
+
+/** Register / unregister with Windows startup. Only for the packaged app (not `npm start`). */
+function applyLoginItem() {
+  if (!app.isPackaged) return;
+  app.setLoginItemSettings({
+    openAtLogin: config.settings.launchAtLogin,
+    // The portable build runs from a temp folder; PORTABLE_EXECUTABLE_FILE is the real .exe.
+    path: process.env.PORTABLE_EXECUTABLE_FILE || process.execPath,
+    args: ['--hidden'],
+  });
 }
 
 // ───────────────────────────── App lifecycle ─────────────────────────────
@@ -471,6 +571,17 @@ if (!app.requestSingleInstanceLock()) {
     }, { useSystemPicker: false });
 
     createControl();
+
+    // React to monitors being plugged / unplugged / rearranged, and to other apps going fullscreen.
+    const onDisplaysChanged = () => { overlays.forEach((w, id) => ensureOnScreen(w, id)); applyFullscreen(); };
+    screen.on('display-added', onDisplaysChanged);
+    screen.on('display-removed', onDisplaysChanged);
+    screen.on('display-metrics-changed', onDisplaysChanged);
+    fullscreenWatcher = watchFullscreen({
+      screen,
+      onChange: (id) => { fullscreenDisplayId = id; applyFullscreen(); },
+    });
+    applyLoginItem();
 
     tray = new Tray(nativeImage.createFromPath(path.join(__dirname, '../../assets/icon.png')).resize({ width: 16, height: 16 }));
     tray.setToolTip('Dancing Mascots');

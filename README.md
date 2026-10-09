@@ -51,6 +51,17 @@ If it ever fails, pick "Stereo Mix" or a virtual cable as the audio source.
 
 `npm test` runs the tempo detector against synthetic drum tracks.
 
+## Behaviour options
+
+- **Pause & hide while another app is fullscreen** (default on): per monitor, so mascots on your second
+  screen keep dancing while a game runs on the first. Uses the foreground window's size + lack of title bar.
+- **Launch at Windows startup:** starts hidden in the tray (installed or portable build).
+- **Tempo history:** a collapsible graph of the last 3 minutes (tempo in use, raw detections, silences).
+- **Multi-monitor:** drag mascots anywhere; right-click → *Move to monitor*. If a monitor is unplugged,
+  stranded mascots are moved to the main screen automatically.
+- **Efficiency:** audio analysis idles in silence, and stops entirely when no mascot is visible.
+  All windows share one renderer process, so 7 mascots cost far less than 7× one.
+
 ## Code map
 
 | File | Role |
@@ -58,6 +69,7 @@ If it ever fails, pick "Stereo Mix" or a virtual cable as the audio source.
 | `src/main/main.js` | Main process: config, overlay windows, tray, IPC, input validation |
 | `src/renderer/control.js` | Control panel UI + audio capture and tempo analysis |
 | `src/renderer/overlay.js` | One mascot window: GIF playback, speed, beat bounce, drag/resize |
+| `src/main/fullscreen.js` | Fullscreen-app detection (Win32 via koffi) |
 | `src/shared/tempo.js` | Tempo/beat detection and speed maths (unit-tested) |
 
 ## Security notes

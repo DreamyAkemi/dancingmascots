@@ -41,6 +41,7 @@ class TempoTracker {
 
     this.bpm = null;         // smoothed tempo (what we report)
     this.confidence = 0;     // 0..1, how clear the beat is
+    this.raw = null;         // latest unsmoothed estimate (for the history graph)
     this._pending = [];      // recent disagreeing estimates (see update())
 
     this._beatT = null;      // time (s) of a beat on the current beat grid
@@ -53,6 +54,7 @@ class TempoTracker {
     this.lastBin = null;
     this.bpm = null;
     this.confidence = 0;
+    this.raw = null;
     this._pending = [];
     this._beatT = null;
     this._period = null;
@@ -211,6 +213,7 @@ class TempoTracker {
    * Call a couple of times per second. Returns the smoothed state:
    *   playing    – is there sound right now?
    *   bpm        – smoothed tempo (null until the first lock)
+   *   raw        – latest unsmoothed estimate (for graphing)
    *   confidence – 0..1
    *   beatT      – time (same clock as push()) of a beat; null if unknown
    *   period     – seconds per beat; null if unknown
@@ -219,12 +222,13 @@ class TempoTracker {
     if (!this.playing) {
       // After a real gap, start fresh so the next song locks on quickly.
       if (this.lastT - this.lastLoudT > this.silenceHoldSec + 1) this.reset();
-      return { playing: false, bpm: this.bpm, confidence: 0, beatT: null, period: null };
+      return { playing: false, bpm: this.bpm, raw: null, confidence: 0, beatT: null, period: null };
     }
 
     const est = this.estimate();
     if (est) {
       this.confidence = est.confidence;
+      this.raw = est.bpm;
       if (this.bpm === null) {
         this.bpm = est.bpm; // first lock: take it immediately
       } else if (Math.abs(est.bpm / this.bpm - 1) < 0.04) {
@@ -244,7 +248,7 @@ class TempoTracker {
       if (this.bpm !== null) this._updateBeatGrid(this.bpm);
     }
     return {
-      playing: true, bpm: this.bpm, confidence: this.confidence,
+      playing: true, bpm: this.bpm, raw: this.raw, confidence: this.confidence,
       beatT: this._beatT, period: this._period,
     };
   }

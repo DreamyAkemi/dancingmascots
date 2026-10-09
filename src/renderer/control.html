@@ -41,6 +41,21 @@
   </section>
 
   <section>
+    <details id="graphBox">
+      <summary>Tempo history (last 3 min)</summary>
+      <canvas id="graph"></canvas>
+      <p class="hint">Line = tempo the mascots use · dots = raw detections · shaded = silence</p>
+    </details>
+  </section>
+
+  <section>
+    <h2>Behaviour</h2>
+    <label><input type="checkbox" id="pauseFs"> Pause &amp; hide mascots while another app is fullscreen on their monitor</label>
+    <p class="hint" id="fsHint" hidden>Fullscreen detection isn't available on this system.</p>
+    <label><input type="checkbox" id="login"> Launch at Windows startup (hidden in the tray)</label>
+  </section>
+
+  <section>
     <h2>Mascots <button id="add">+ Add GIFs</button></h2>
     <div id="drop">Drop .gif files here</div>
     <div id="list"></div>

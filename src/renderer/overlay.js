@@ -37,6 +37,11 @@ let patchCache = null;  // Map(frameIndex -> pixels) when the GIF is small enoug
 let cur = 0;            // index of the frame currently shown
 let acc = 0;            // milliseconds accumulated towards the next frame
 
+// When another app is fullscreen on this monitor the main process hides us and sets `paused`,
+// which stops the animation loop entirely (zero CPU) until it is cleared.
+let paused = false;
+let looping = false; // is the requestAnimationFrame loop currently running?
+
 // Playback speed multiplier (1 = the GIF's own timing). `rate` chases `targetRate` smoothly.
 let rate = 0;
 
@@ -146,6 +151,7 @@ function beatPulse() {
 let last = performance.now();
 
 function tick(now) {
+  if (paused) { looping = false; return; } // stop the loop; setPaused(false) restarts it
   const dt = Math.min(100, now - last); // cap so a long stall doesn't make the GIF skip ahead
   last = now;
 
@@ -177,6 +183,14 @@ function tick(now) {
   requestAnimationFrame(tick);
 }
 
+/** Start the loop if it isn't already running. */
+function startLoop() {
+  if (looping) return;
+  looping = true;
+  last = performance.now(); // avoid one giant time step after a pause
+  requestAnimationFrame(tick);
+}
+
 // ───────────────────────────── Applying settings ─────────────────────────────
 function applyMascot() { view.classList.toggle('flip', !!mascot.flip); }
 function applySettings() { document.body.classList.toggle('locked', !!settings.locked); }
@@ -203,13 +217,14 @@ window.addEventListener('contextmenu', (e) => { e.preventDefault(); ipcRenderer.
 ipcRenderer.on('mascot', (_e, m) => { mascot = m; applyMascot(); });
 ipcRenderer.on('settings', (_e, s) => { settings = s; applySettings(); });
 ipcRenderer.on('tempo', (_e, t) => { tempo = t; });
+ipcRenderer.on('paused', (_e, p) => { paused = p; if (!paused) startLoop(); });
 
 // ───────────────────────────── Startup ─────────────────────────────
 (async () => {
   const init = await ipcRenderer.invoke('overlay:init');
   if (!init) return; // not a known mascot window
-  ({ mascot, settings, tempo } = init);
+  ({ mascot, settings, tempo, paused } = init);
   applyMascot(); applySettings();
   try { load(mascot.path); } catch (e) { console.error('Could not load gif:', e.message); }
-  requestAnimationFrame(tick);
+  if (!paused) startLoop();
 })();
