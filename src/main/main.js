@@ -503,6 +503,7 @@ function createControl() {
     width: 480, height: 900, minWidth: 400, title: 'Dancing Mascots',
     show: !process.argv.includes('--hidden'), // "launch at login" starts hidden in the tray
     backgroundColor: '#14141a', autoHideMenuBar: true,
+    icon: path.join(__dirname, '../../assets/icon.png'),
     webPreferences: {
       nodeIntegration: true,   // control.js reads GIFs for thumbnails; only our local page is loaded
       contextIsolation: false,
@@ -595,7 +596,7 @@ if (!app.requestSingleInstanceLock()) {
     });
     applyLoginItem();
 
-    tray = new Tray(nativeImage.createFromPath(path.join(__dirname, '../../assets/icon.png')).resize({ width: 16, height: 16 }));
+    tray = new Tray(nativeImage.createFromPath(path.join(__dirname, '../../assets/tray.png')).resize({ width: 16, height: 16 }));
     tray.setToolTip('Dancing Mascots');
     tray.on('click', showControl);
     updateTrayMenu();

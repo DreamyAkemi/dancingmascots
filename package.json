@@ -23,7 +23,7 @@
     "productName": "Dancing Mascots",
     "files": [
       "src/**/*",
-      "assets/icon.png",
+      "assets/*.png",
       "package.json",
       "node_modules/**/*",
       "!node_modules/koffi/build/koffi/{darwin_*,freebsd_*,linux_*,musl_*,openbsd_*,win32_arm64,win32_ia32}",

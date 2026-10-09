@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ff7ac0"/><stop offset="1" stop-color="#7a5cff"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+
+  <!-- headphone band (behind the head) -->
+  <path d="M104 236C88 -14 424 -14 408 236" fill="none" stroke="#2b1b5e" stroke-width="30" stroke-linecap="round"/>
+
+  <!-- head: a simple geometric fox, one flat colour -->
+  <path d="M150 112L218 194Q256 182 294 194L362 112L404 306L256 428L108 306Z"
+        fill="#ffffff" stroke="#ffffff" stroke-width="22" stroke-linejoin="round"/>
+
+  <!-- ear insides -->
+  <path d="M160 156L196 200L168 224Z" fill="#ffb3d6"/>
+  <path d="M352 156L316 200L344 224Z" fill="#ffb3d6"/>
+
+  <!-- face -->
+  <path d="M190 276q22-26 44 0" fill="none" stroke="#2b1b5e" stroke-width="16" stroke-linecap="round"/>
+  <path d="M278 276q22-26 44 0" fill="none" stroke="#2b1b5e" stroke-width="16" stroke-linecap="round"/>
+  <path d="M236 340h40l-20 24z" fill="#2b1b5e" stroke="#2b1b5e" stroke-width="10" stroke-linejoin="round"/>
+
+  <!-- ear cups (in front, at the sides of the head) -->
+  <rect x="76" y="200" width="64" height="112" rx="30" fill="#2b1b5e"/>
+  <rect x="372" y="200" width="64" height="112" rx="30" fill="#2b1b5e"/>
+  <rect x="98" y="222" width="20" height="68" rx="10" fill="#ff7ac0"/>
+  <rect x="394" y="222" width="20" height="68" rx="10" fill="#ff7ac0"/>
+</svg>
