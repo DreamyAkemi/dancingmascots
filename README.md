@@ -1,88 +1,126 @@
+<div align="center">
+
+<img src="assets/icon.png" width="96" alt="Dancing Mascots icon">
+
 # Dancing Mascots
 
-Looping GIFs that dance on your desktop as always-on-top overlays, and speed up / slow down with the
-tempo of whatever you're playing. Silence pauses them.
+**Your favourite dancing GIFs, living on your desktop and grooving to whatever you're listening to.**
 
-<img width="473" height="434" alt="dancingmascots" src="https://github.com/user-attachments/assets/940705ea-c26d-4476-880e-3e113505bcf5" />
+<img width="473" height="434" alt="Dancing Mascots demo" src="https://github.com/user-attachments/assets/940705ea-c26d-4476-880e-3e113505bcf5" />
 
-## Run
+</div>
 
-```
-npm install
-npm start
-```
+Load any looping GIFs, drop them anywhere on your screen, and they dance in time with your music. Faster
+songs make them dance faster, slower songs slow them down, and when the music stops they freeze.
+It works with Spotify, YouTube, games, anything that plays through your speakers or headphones.
 
-Built for Windows 10/11 (Electron). Needs [Node.js](https://nodejs.org) installed. A tray icon keeps it running when you close the panel.
+## Features
 
-## Get the .exe (no Node needed)
+- **Dances to the beat.** Detects the tempo of whatever is playing and adjusts each GIF's speed to match.
+- **As many mascots as you like.** Move and resize each one freely, on any monitor.
+- **Easy to manage.** Drag GIFs onto the app to add them, switch each one on or off with a click.
+- **Full control when you want it.** Per-mascot speed, a global speed, manual BPM and tap tempo.
+- **Bounce on the beat** (optional): mascots pulse with every beat.
+- **Stays out of your way.** Lives in the system tray, can pause itself while a game or video is
+  fullscreen, and can start with Windows.
+- **Light on your PC.** Uses very little CPU, and nothing while the music is off.
+- **Private.** No account, no internet connection, nothing is collected.
 
-Every push builds Windows installers via GitHub Actions: open the repo's **Actions** tab, pick the latest
-run and download `DancingMascots-windows` (an installer and a portable `.exe`). Pushing a tag like `v0.1.0`
-also attaches them to a GitHub Release. To build locally on Windows: `npm run dist` (output in `dist/`).
+## Download
 
-The installer isn't code-signed, so Windows SmartScreen will say "Unknown publisher": click *More info → Run anyway*.
+1. Go to the [**Releases** page](https://github.com/DreamyAkemi/dancingmascots/releases) and download the
+   latest version:
+   - **`Dancing Mascots Setup x.y.z.exe`** installs the app like any other program (recommended).
+   - **`Dancing Mascots x.y.z.exe`** is the portable version: no install, just run it.
+2. Run it. Windows 10 or 11 is required.
 
-## Using it
+> **"Windows protected your PC" / "Unknown publisher"?** The app isn't signed with a paid certificate, so
+> Windows shows this for any new app. Click **More info**, then **Run anyway**.
 
-- **Add GIFs:** drop `.gif` files on the panel or click **+ Add GIFs**. Each toggle (**On/Off**) loads / unloads
-  its overlay; ✕ removes it from the library. Your setup (files, positions, sizes, speeds) is remembered.
-- **Move:** drag the mascot. **Resize:** drag the corner grip or scroll the mouse wheel over it.
-- **Right-click** a mascot for flip / speed presets / lock / unload.
-- **Lock overlays** (panel checkbox or tray) makes them click-through; unlock from the panel or tray.
+## Getting started
+
+1. **Add some GIFs.** Drag `.gif` files onto the window, or click **+ Add GIFs**. They appear on your
+   desktop right away.
+2. **Play some music.** The status in the top right turns green and shows **Playing**, and the big number is
+   the detected tempo in BPM.
+3. **Arrange them.** Drag a mascot to move it, drag its bottom-right corner or scroll over it to resize it.
+
+That's it. Close the window and the app keeps running in the system tray (next to the clock). Click the
+tray icon to open it again, and right-click it to quit.
+
+> **Tip:** GIFs with a **transparent background** look best, because they dance directly on your desktop.
+> A GIF with a solid background shows up as a rectangle. The app doesn't come with any GIFs, so bring your own.
+
+## The controls
 
 ### Tempo
 
-Audio is captured from your **output device** (system loopback), so Spotify, YouTube, anything works.
-The beat is found by onset detection + a comb-filter tempo estimate over the last ~7 s, so it takes a few
-seconds to lock on after a song starts and glides between speeds. No sound for ~2 s → mascots freeze.
+| Control | What it does |
+| --- | --- |
+| **Audio source** | *System audio* picks up whatever you hear. Choose a specific input instead if you need to. |
+| **Auto-detect / Manual** | Let the app detect the tempo, or type your own BPM. |
+| **Tap** | Tap along to a song 3 or more times to set the BPM yourself (switches to Manual). |
+| **Detection looks wrong?** | Press **½×** or **2×** if the app picks half or double the real tempo. |
+| **All mascots speed** | Makes every mascot faster or slower. |
+| **Bounce on the beat** | Makes mascots pulse with each beat. The slider sets how strong. |
+
+The tempo takes a few seconds to lock on when a song starts. If a part of the song has no clear beat
+(like an intro or a breakdown), the app keeps the last tempo it was sure about. The **Tempo history**
+graph shows how it's doing.
+
+### Behaviour
+
+| Option | What it does |
+| --- | --- |
+| **Keep mascots above other windows** | On: always visible. Off: other windows can cover them. |
+| **Pause & hide while another app is fullscreen** | Saves performance during games and videos. Only affects mascots on that monitor. |
+| **Launch at Windows startup** | Starts the app hidden in the tray when you log in. |
+
+### Each mascot
 
 | Control | What it does |
 | --- | --- |
-| Auto-detect / Manual / Tap | Use detected BPM, or type/tap one |
-| ½× / 1× / 2× | Fix half-time/double-time detection mistakes |
-| All mascots speed | Global multiplier |
-| Bounce on the beat | Squash-and-stretch pulse on every detected beat (with a strength slider) |
-| Per-mascot Speed | Multiplier for one GIF |
-| "Loop looks right at N BPM" | The tempo at which that GIF plays at its natural speed (default 120) |
-| Auto half/double speed | Off by default. When on, a GIF plays at half or double speed if that keeps it closer to its natural speed (so a 180 BPM song plays like 90 BPM on a 120 BPM GIF) |
+| **On / Off** | Shows or hides the mascot. Your setup is remembered. |
+| **✕** | Removes it from your list. |
+| **Speed** | Makes this one mascot faster or slower than the others. |
+| **Loop looks right at ... BPM** | The song tempo at which this GIF looks right at normal speed (120 by default). Raise it for a GIF that is already fast, lower it for a slow one. |
+| **Auto half/double speed** | Plays the GIF at half or double speed instead of an extreme one when the song is much faster or slower than its natural tempo. Off by default. |
+| **flip** | Mirrors the GIF. |
 
-System audio capture (WASAPI loopback) works out of the box on Windows 11 and follows your default output device.
-If it ever fails, pick "Stereo Mix" or a virtual cable as the audio source.
+**On the mascot itself:** drag to move, drag the corner or scroll to resize, and **right-click** for flip,
+speed presets, *Move to monitor*, lock and unload. **Lock overlays (click-through)** at the bottom of the
+panel makes mascots ignore the mouse; unlock from the panel or the tray menu.
 
-## Dev
+## Troubleshooting
 
-`npm test` runs the tempo detector against synthetic drum tracks.
+**The mascots don't move.**
+Check that the status says *Playing*. The app listens to your default output device, so make sure the sound
+is actually playing through it. You can also try another **Audio source**, or switch to **Manual** and set a BPM.
 
-## Behaviour options
+**They dance at the wrong speed.**
+Press **½×** or **2×**, tap the tempo yourself, or adjust the speed sliders. Some songs (very fast ones,
+or ones with tempo changes) are hard to read automatically.
 
-- **Pause & hide while another app is fullscreen** (default on): per monitor, so mascots on your second
-  screen keep dancing while a game runs on the first. Uses the foreground window's size + lack of title bar.
-- **Keep mascots above other windows** (default on): turn it off and they behave like normal windows that
-  other windows can cover.
-- **Launch at Windows startup:** starts hidden in the tray (installed or portable build).
-- **Tempo history:** a collapsible graph of the last 3 minutes (tempo in use, raw detections, silences).
-- **Multi-monitor:** drag mascots anywhere; right-click → *Move to monitor*. If a monitor is unplugged,
-  stranded mascots are moved to the main screen automatically.
-- **Efficiency:** audio analysis idles in silence, and stops entirely when no mascot is visible.
-  All windows share one renderer process, so 7 mascots cost far less than 7× one.
+**A mascot disappeared or is off-screen.**
+Click **Reset positions** at the bottom of the panel. If you unplug a monitor, mascots on it move to your
+main screen automatically.
 
-## Code map
+**I can't grab a mascot.**
+**Lock overlays** is probably on. Untick it in the panel, or in the tray menu.
 
-| File | Role |
-| --- | --- |
-| `src/main/main.js` | Main process: config, overlay windows, tray, IPC, input validation |
-| `src/renderer/control.js` | Control panel UI + audio capture and tempo analysis |
-| `src/renderer/overlay.js` | One mascot window: GIF playback, speed, beat bounce, drag/resize |
-| `src/main/fullscreen.js` | Fullscreen-app detection (Win32 via koffi) |
-| `src/shared/tempo.js` | Tempo/beat detection and speed maths (unit-tested) |
+**Where is the window?**
+Click the app's icon in the system tray (bottom right, near the clock; you may need to open the little ^ arrow).
 
-## Security notes
+## Privacy
 
-- Windows run with Node integration because they read your GIF files directly, so they only ever load
-  the app's own local pages: navigation and `window.open` are blocked, and each page has a strict
-  Content-Security-Policy.
-- All IPC messages and the saved `config.json` are validated (known keys, types, ranges); nothing from
-  them is inserted as HTML.
-- GIFs are size-limited (100 MB, 4096 px, 3000 frames). Only audio capture permission is granted.
-- The app makes no network connections and collects nothing.
-- The Windows builds are unsigned (SmartScreen warning on first run).
+Dancing Mascots works entirely on your PC. It never connects to the internet, doesn't record or store your audio
+(it only measures the beat as it plays), and collects nothing. Your settings are saved in a small file on your
+computer.
+
+## Credits and license
+
+Made by [DreamyAkemi](https://github.com/DreamyAkemi) with help from Claude. Free and open source under the
+[MIT license](LICENSE). Built with [Electron](https://www.electronjs.org/),
+[gifuct-js](https://github.com/matt-way/gifuct-js) and [koffi](https://koffi.dev/).
+
+Want to run it from source or help out? See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
