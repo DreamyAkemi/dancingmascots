@@ -10,7 +10,7 @@ npm install
 npm start
 ```
 
-Runs on Windows, macOS and Linux (Electron). A tray icon keeps it running when you close the panel.
+Built for Windows 10/11 (Electron). Needs [Node.js](https://nodejs.org) installed. A tray icon keeps it running when you close the panel.
 
 ## Using it
 
@@ -35,12 +35,8 @@ seconds to lock on after a song starts and glides between speeds. No sound for ~
 | "Loop looks right at N BPM" | The tempo at which that GIF plays at its natural speed (default 120) |
 | ½/2× smart | Lets a GIF use half/double time if that keeps it closer to its natural speed |
 
-### Platform notes for system audio
-
-- **Windows:** works out of the box.
-- **macOS:** needs macOS 13+ and *Screen Recording* permission (Electron's loopback uses the screen-capture API).
-  Otherwise route audio through a virtual device (e.g. BlackHole) and choose it under "Audio source".
-- **Linux:** if "System audio" isn't available, pick a PulseAudio/PipeWire *monitor* source as an input.
+System audio capture (WASAPI loopback) works out of the box on Windows 11 and follows your default output device.
+If it ever fails, pick "Stereo Mix" or a virtual cable as the audio source.
 
 ## Dev
 
