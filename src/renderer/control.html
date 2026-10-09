@@ -3,6 +3,9 @@
 <head>
 <meta charset="utf-8">
 <title>Dancing Mascots</title>
+<!-- Content-Security-Policy: only our own script, no network, no inline script. -->
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:">
 <link rel="stylesheet" href="control.css">
 </head>
 <body>
@@ -31,6 +34,10 @@
       <input id="globalSpeed" type="range" min="0.25" max="3" step="0.05">
       <output id="globalSpeedOut"></output>
     </label>
+    <div class="row">
+      <label><input type="checkbox" id="bounce"> Bounce on the beat</label>
+      <input id="bounceStrength" type="range" min="0.1" max="1" step="0.05" title="Bounce strength">
+    </div>
   </section>
 
   <section>

@@ -1,4 +1,19 @@
 'use strict';
+/**
+ * main.js — Electron main process.
+ *
+ * Responsibilities
+ *  - Owns the saved configuration (settings + the mascot library) and writes it to disk.
+ *  - Creates one transparent, always-on-top "overlay" window per enabled mascot.
+ *  - Creates the control panel window and the system-tray icon.
+ *  - Relays messages between the control panel (which analyses the audio) and the overlays
+ *    (which animate the GIFs).
+ *  - Validates EVERYTHING that arrives over IPC or from the config file (see "Validation").
+ *
+ * Window layout
+ *    control panel  ──tempo──▶  main  ──tempo──▶  overlay windows (one per mascot)
+ *         ▲  settings / mascot edits ◀──────────────┘
+ */
 const path = require('path');
 const fs = require('fs');
 const {
@@ -6,112 +21,219 @@ const {
   desktopCapturer, session,
 } = require('electron');
 
+// ───────────────────────────── Constants ─────────────────────────────
+
+/** Where settings are saved (e.g. %APPDATA%/dancingmascots/config.json). */
 const CONFIG_FILE = () => path.join(app.getPath('userData'), 'config.json');
+
+/** Largest GIF we are willing to load (guards against huge / malicious files). */
+const MAX_GIF_BYTES = 100 * 1024 * 1024;
+
+/** Settings every install starts with. Unknown keys in a saved file are ignored. */
 const DEFAULT_SETTINGS = {
-  audioSource: 'loopback', // 'loopback' or an audio input deviceId
-  tempoMode: 'auto',       // 'auto' | 'manual'
+  audioSource: 'loopback', // 'loopback' = what you hear, otherwise an audio-input deviceId
+  tempoMode: 'auto',       // 'auto' = detect from audio, 'manual' = use manualBpm
   manualBpm: 120,
-  globalSpeed: 1,
-  octave: 1,               // 0.5 / 1 / 2 correction for wrong half/double-time detection
-  locked: false,           // click-through overlays
+  globalSpeed: 1,          // multiplier applied to every mascot
+  octave: 1,               // 0.5 / 1 / 2 — fixes half-time / double-time detection mistakes
+  locked: false,           // true = overlays are click-through
+  bounce: false,           // squash-and-stretch pulse on every beat
+  bounceStrength: 0.5,     // 0..1
 };
 
-let config = { settings: { ...DEFAULT_SETTINGS }, mascots: [] };
-let controlWin = null;
-let tray = null;
-let quitting = false;
-let tempo = { playing: false, bpm: null, confidence: 0 };
-const overlays = new Map(); // mascot id -> BrowserWindow
+// ───────────────────────────── State ─────────────────────────────
 
-// ---------- persistence ----------
+let config = { settings: { ...DEFAULT_SETTINGS }, mascots: [] };
+let controlWin = null;            // the control panel window
+let tray = null;                  // system tray icon
+let quitting = false;             // true once the user really chose Quit
+let tempo = { playing: false, bpm: null, beat: null, period: null }; // latest from control panel
+const overlays = new Map();       // mascot id -> its overlay BrowserWindow
+
+// ───────────────────────────── Validation helpers ─────────────────────────────
+// The renderer windows run with Node integration (they read GIF files directly), so anything
+// that could inject code into them is dangerous. We therefore never trust data coming from
+// IPC or from config.json: it is copied through these sanitizers, which only keep known keys
+// with values of the right type and range.
+
+const isObj = (v) => v && typeof v === 'object' && !Array.isArray(v);
+const isNum = (v) => typeof v === 'number' && Number.isFinite(v);
+const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+
+/** Small PNG thumbnails made by the control panel are stored as data: URLs; accept only that shape. */
+const THUMB_RE = /^data:image\/png;base64,[A-Za-z0-9+/=]{1,200000}$/;
+
+/** Is this an absolute path to an existing .gif that is not absurdly big? */
+function isUsableGif(p) {
+  try {
+    return typeof p === 'string' && path.isAbsolute(p) && /\.gif$/i.test(p)
+      && fs.statSync(p).isFile() && fs.statSync(p).size <= MAX_GIF_BYTES;
+  } catch { return false; }
+}
+
+/** Keep only valid, in-range settings from `src`. Unknown keys and bad values are dropped. */
+function sanitizeSettings(src) {
+  const out = {};
+  if (!isObj(src)) return out;
+  if (typeof src.audioSource === 'string' && src.audioSource.length <= 512) out.audioSource = src.audioSource;
+  if (src.tempoMode === 'auto' || src.tempoMode === 'manual') out.tempoMode = src.tempoMode;
+  if (isNum(src.manualBpm)) out.manualBpm = clamp(src.manualBpm, 30, 300);
+  if (isNum(src.globalSpeed)) out.globalSpeed = clamp(src.globalSpeed, 0.1, 4);
+  if ([0.5, 1, 2].includes(src.octave)) out.octave = src.octave;
+  if (typeof src.locked === 'boolean') out.locked = src.locked;
+  if (typeof src.bounce === 'boolean') out.bounce = src.bounce;
+  if (isNum(src.bounceStrength)) out.bounceStrength = clamp(src.bounceStrength, 0, 1);
+  return out;
+}
+
+/** Same idea for the editable fields of a mascot (id / path are never editable via IPC). */
+function sanitizeMascotPatch(src) {
+  const out = {};
+  if (!isObj(src)) return out;
+  if (typeof src.enabled === 'boolean') out.enabled = src.enabled;
+  if (typeof src.flip === 'boolean') out.flip = src.flip;
+  if (typeof src.smart === 'boolean') out.smart = src.smart;
+  if (isNum(src.speed)) out.speed = clamp(src.speed, 0.1, 4);
+  if (isNum(src.baseBpm)) out.baseBpm = clamp(src.baseBpm, 30, 300);
+  if (typeof src.thumb === 'string' && THUMB_RE.test(src.thumb)) out.thumb = src.thumb;
+  return out;
+}
+
+/** Rebuild a full, trustworthy mascot record from untrusted data (used when loading config.json). */
+function sanitizeMascot(src) {
+  if (!isObj(src) || typeof src.id !== 'string' || !/^[a-z0-9]{1,32}$/i.test(src.id)) return null;
+  if (typeof src.path !== 'string' || !path.isAbsolute(src.path) || !/\.gif$/i.test(src.path)) return null;
+  return {
+    id: src.id,
+    name: typeof src.name === 'string' ? src.name.slice(0, 100) : path.basename(src.path, '.gif'),
+    path: src.path,
+    enabled: src.enabled !== false,
+    x: isNum(src.x) ? Math.round(src.x) : 120,
+    y: isNum(src.y) ? Math.round(src.y) : 160,
+    w: isNum(src.w) ? clamp(Math.round(src.w), 0, 4000) : 0, // 0 = "pick a size on first load"
+    h: isNum(src.h) ? clamp(Math.round(src.h), 0, 4000) : 0,
+    baseBpm: 120, speed: 1, smart: true, flip: false,
+    ...sanitizeMascotPatch(src),
+  };
+}
+
+// ───────────────────────────── Persistence ─────────────────────────────
+
+/** Read config.json (first run: file is missing, defaults are used). */
 function loadConfig() {
   try {
     const saved = JSON.parse(fs.readFileSync(CONFIG_FILE(), 'utf8'));
     config = {
-      settings: { ...DEFAULT_SETTINGS, ...saved.settings },
-      mascots: Array.isArray(saved.mascots) ? saved.mascots : [],
+      settings: { ...DEFAULT_SETTINGS, ...sanitizeSettings(saved.settings) },
+      mascots: (Array.isArray(saved.mascots) ? saved.mascots : []).map(sanitizeMascot).filter(Boolean),
     };
-  } catch { /* first run */ }
+  } catch { /* first run or unreadable file: keep defaults */ }
 }
+
 let saveTimer = null;
+/** Write config.json shortly after the last change (debounced so dragging doesn't hammer the disk). */
 function saveConfig() {
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
     try { fs.writeFileSync(CONFIG_FILE(), JSON.stringify(config, null, 2)); } catch (e) { console.error(e); }
   }, 200);
 }
-const find = (id) => config.mascots.find((m) => m.id === id);
-const thumbs = new Map(); // mascot id -> small static data URL
-function thumbOf(m) {
-  if (!thumbs.has(m.id)) {
-    const img = nativeImage.createFromPath(m.path);
-    thumbs.set(m.id, img.isEmpty() ? '' : img.resize({ height: 64 }).toDataURL());
-  }
-  return thumbs.get(m.id);
-}
+
+const findMascot = (id) => config.mascots.find((m) => m.id === id);
+
+/** The state snapshot sent to the control panel (adds a "file is missing" flag). */
 function publicState() {
   return {
     settings: config.settings,
-    mascots: config.mascots.map((m) => ({ ...m, missing: !fs.existsSync(m.path), thumb: thumbOf(m) })),
+    mascots: config.mascots.map((m) => ({ ...m, missing: !fs.existsSync(m.path) })),
   };
 }
+
+/** Tell the control panel + tray that something changed. */
 function pushState() {
   if (controlWin && !controlWin.isDestroyed()) controlWin.webContents.send('state', publicState());
   updateTrayMenu();
 }
 
-// ---------- overlay windows ----------
+// ───────────────────────────── Overlay windows ─────────────────────────────
+
+/** Create the transparent always-on-top window for one mascot (no-op if already open). */
 function openOverlay(m) {
-  if (overlays.has(m.id) || !fs.existsSync(m.path)) return;
-  const w = Math.max(60, m.w || 220), h = Math.max(60, m.h || 220);
+  if (overlays.has(m.id) || !isUsableGif(m.path)) return;
+
   const win = new BrowserWindow({
-    x: m.x, y: m.y, width: w, height: h,
-    transparent: true, frame: false, hasShadow: false, resizable: false,
-    alwaysOnTop: true, skipTaskbar: true, minWidth: 40, minHeight: 40,
-    backgroundColor: '#00000000',
+    x: m.x, y: m.y,
+    width: Math.max(60, m.w || 220), height: Math.max(60, m.h || 220),
+    minWidth: 40, minHeight: 40,
+    transparent: true, frame: false, hasShadow: false, backgroundColor: '#00000000',
+    resizable: false,          // we implement resizing ourselves (see drag:* handlers)
+    alwaysOnTop: true, skipTaskbar: true,
     webPreferences: {
-      nodeIntegration: true, contextIsolation: false,
-      backgroundThrottling: false, autoplayPolicy: 'no-user-gesture-required',
+      nodeIntegration: true,   // overlay.js reads the GIF from disk. Only OUR local pages are ever loaded.
+      contextIsolation: false,
+      backgroundThrottling: false,                 // keep animating when nothing is focused
+      autoplayPolicy: 'no-user-gesture-required',
     },
   });
-  win.setAlwaysOnTop(true, 'screen-saver');
+  lockDownNavigation(win);
+  win.setAlwaysOnTop(true, 'screen-saver'); // stay above fullscreen-ish windows
   win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-  win.setIgnoreMouseEvents(config.settings.locked);
-  win.loadFile(path.join(__dirname, '../renderer/overlay.html'), { query: { id: m.id } });
+  win.setIgnoreMouseEvents(config.settings.locked); // click-through when locked
+  win.loadFile(path.join(__dirname, '../renderer/overlay.html'));
   win.on('closed', () => overlays.delete(m.id));
   overlays.set(m.id, win);
 }
+
 function closeOverlay(id) {
   const win = overlays.get(id);
   if (win && !win.isDestroyed()) win.close();
   overlays.delete(id);
 }
+
+/** Send a message to every open overlay. */
 function broadcast(channel, payload) {
   for (const win of overlays.values()) if (!win.isDestroyed()) win.webContents.send(channel, payload);
 }
+
+/** Remember an overlay's current position and size. */
 function saveBounds(id) {
-  const win = overlays.get(id), m = find(id);
+  const win = overlays.get(id), m = findMascot(id);
   if (!win || !m || win.isDestroyed()) return;
   const b = win.getBounds();
   Object.assign(m, { x: b.x, y: b.y, w: b.width, h: b.height });
   saveConfig();
 }
-function idOf(sender) {
+
+/** Which mascot does this IPC message come from? (null if the sender isn't an overlay.) */
+function overlayIdOf(sender) {
   for (const [id, win] of overlays) if (!win.isDestroyed() && win.webContents === sender) return id;
   return null;
 }
 
+/**
+ * Stop a window from ever navigating away from our local pages or opening new windows.
+ * Because these windows have Node integration, loading anything remote would be dangerous.
+ */
+function lockDownNavigation(win) {
+  win.webContents.on('will-navigate', (e) => e.preventDefault());
+  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+}
+
+/** Add GIF files to the library (and show them). Silently skips anything invalid. */
 function addMascots(paths) {
-  for (const p of paths) {
-    if (!/\.gif$/i.test(p)) continue;
+  if (!Array.isArray(paths)) return;
+  for (const p of paths.slice(0, 100)) {
+    if (!isUsableGif(p)) continue;
     const existing = config.mascots.find((m) => m.path === p);
     if (existing) { existing.enabled = true; openOverlay(existing); continue; }
-    const n = config.mascots.length;
+
+    const n = config.mascots.length; // stagger start positions so new mascots don't stack exactly
     const m = {
       id: `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
       name: path.basename(p, path.extname(p)),
       path: p, enabled: true,
-      x: 120 + (n % 6) * 90, y: 160 + (n % 4) * 60, w: 0, h: 0,
+      x: 120 + (n % 6) * 90, y: 160 + (n % 4) * 60,
+      w: 0, h: 0, // 0 = overlay picks a size from the GIF once it has loaded
       baseBpm: 120, speed: 1, smart: true, flip: false,
     };
     config.mascots.push(m);
@@ -121,8 +243,11 @@ function addMascots(paths) {
   pushState();
 }
 
-// ---------- IPC: control panel ----------
+// ───────────────────────────── IPC: control panel → main ─────────────────────────────
+
 ipcMain.handle('state:get', () => publicState());
+
+// "+ Add GIFs" button: show a file picker.
 ipcMain.handle('mascot:pick', async () => {
   const r = await dialog.showOpenDialog(controlWin, {
     title: 'Add dancing GIFs', properties: ['openFile', 'multiSelections'],
@@ -130,27 +255,35 @@ ipcMain.handle('mascot:pick', async () => {
   });
   if (!r.canceled) addMascots(r.filePaths);
 });
+
+// Drag & drop onto the panel.
 ipcMain.on('mascot:add', (_e, paths) => addMascots(paths));
-ipcMain.on('mascot:update', (_e, id, patch) => {
-  const m = find(id);
+
+// Edit one mascot (speed, flip, enabled, ...). Also used by the tray menu.
+ipcMain.on('mascot:update', (_e, id, rawPatch) => {
+  const m = findMascot(id);
   if (!m) return;
-  const { enabled, ...rest } = patch;
-  Object.assign(m, rest);
-  if (enabled !== undefined) {
+  const { enabled, ...patch } = sanitizeMascotPatch(rawPatch);
+  Object.assign(m, patch);
+
+  if (enabled !== undefined) { // On/Off toggle = load/unload the overlay
     m.enabled = enabled;
     enabled ? openOverlay(m) : closeOverlay(id);
   }
   const win = overlays.get(id);
   if (win && !win.isDestroyed()) win.webContents.send('mascot', m);
   saveConfig();
-  if (enabled !== undefined) pushState();
+  if (enabled !== undefined) pushState(); // list structure changed, so refresh the panel/tray
 });
+
 ipcMain.on('mascot:remove', (_e, id) => {
   closeOverlay(id);
   config.mascots = config.mascots.filter((m) => m.id !== id);
   saveConfig();
   pushState();
 });
+
+// "Reset positions": line everything up at the default spots (useful if a mascot ends up off-screen).
 ipcMain.on('mascot:reset-positions', () => {
   config.mascots.forEach((m, i) => {
     const win = overlays.get(m.id);
@@ -158,74 +291,100 @@ ipcMain.on('mascot:reset-positions', () => {
     saveBounds(m.id);
   });
 });
-ipcMain.on('settings:update', (_e, patch) => {
+
+// Global settings (also used by the tray menu and the overlay right-click menu).
+ipcMain.on('settings:update', (_e, rawPatch) => {
+  const patch = sanitizeSettings(rawPatch);
   Object.assign(config.settings, patch);
   if ('locked' in patch) for (const w of overlays.values()) w.setIgnoreMouseEvents(config.settings.locked);
   broadcast('settings', config.settings);
   saveConfig();
   pushState();
 });
+
+// Latest tempo from the control panel's audio analysis → forwarded to all overlays.
 ipcMain.on('tempo', (_e, t) => {
-  tempo = t;
+  if (!isObj(t)) return;
+  tempo = {
+    playing: t.playing === true,
+    bpm: isNum(t.bpm) ? clamp(t.bpm, 30, 300) : null,
+    beat: isNum(t.beat) ? t.beat : null,                       // epoch ms of a beat
+    period: isNum(t.period) ? clamp(t.period, 0.2, 2) : null,  // seconds per beat
+  };
   broadcast('tempo', tempo);
 });
 
-// ---------- IPC: overlays ----------
+// ───────────────────────────── IPC: overlay → main ─────────────────────────────
+
+// An overlay asks for its starting data.
 ipcMain.handle('overlay:init', (e) => {
-  const id = idOf(e.sender);
-  return { mascot: find(id), settings: config.settings, tempo };
+  const m = findMascot(overlayIdOf(e.sender));
+  return m ? { mascot: m, settings: config.settings, tempo } : null;
 });
+
+// The overlay tells us the GIF's size/aspect ratio once it has decoded it.
 ipcMain.on('overlay:aspect', (e, aspect, naturalW) => {
-  const id = idOf(e.sender), m = find(id), win = overlays.get(id);
+  if (!isNum(aspect) || aspect <= 0 || !isNum(naturalW)) return;
+  const id = overlayIdOf(e.sender), m = findMascot(id), win = overlays.get(id);
   if (!m || !win) return;
-  m.aspect = aspect;
-  if (!m.w || !m.h) { // first load: pick a sensible size
-    const w = Math.round(Math.min(Math.max(naturalW || 220, 120), 260));
-    const b = win.getBounds();
-    win.setBounds({ x: b.x, y: b.y, width: w, height: Math.round(w / aspect) });
+  const b = win.getBounds();
+  if (!m.w || !m.h) {
+    // First time we see this GIF: pick a comfortable default size (120–260 px wide).
+    const width = Math.round(clamp(naturalW, 120, 260));
+    win.setBounds({ x: b.x, y: b.y, width, height: Math.round(width / aspect) });
     saveBounds(id);
   } else {
-    // Keep stored width, fix height to the gif's real aspect ratio.
-    const b = win.getBounds();
+    // Keep the saved width but make sure the height matches the GIF's true proportions.
     win.setBounds({ x: b.x, y: b.y, width: b.width, height: Math.round(b.width / aspect) });
   }
 });
 
-let drag = null;
-ipcMain.on('drag:start', (e, { sx, sy, mode }) => {
-  const id = idOf(e.sender);
-  if (!id) return;
+// Moving / resizing. The overlay window is frameless, so the page reports pointer positions
+// (in screen coordinates) and we move/resize the window ourselves.
+let drag = null; // { id, win, b: bounds at drag start, sx/sy: pointer at start, mode, aspect }
+
+ipcMain.on('drag:start', (e, { sx, sy, mode } = {}) => {
+  const id = overlayIdOf(e.sender);
+  if (!id || !isNum(sx) || !isNum(sy) || (mode !== 'move' && mode !== 'resize')) return;
   const win = overlays.get(id), b = win.getBounds();
   drag = { id, win, b, sx, sy, mode, aspect: b.width / b.height };
 });
-ipcMain.on('drag:move', (_e, { sx, sy }) => {
-  if (!drag || drag.win.isDestroyed()) return;
+
+ipcMain.on('drag:move', (_e, { sx, sy } = {}) => {
+  if (!drag || drag.win.isDestroyed() || !isNum(sx) || !isNum(sy)) return;
   const { b } = drag, dx = sx - drag.sx, dy = sy - drag.sy;
   if (drag.mode === 'move') {
     drag.win.setBounds({ x: Math.round(b.x + dx), y: Math.round(b.y + dy), width: b.width, height: b.height });
-  } else {
-    const width = Math.max(50, Math.round(b.width + Math.max(dx, dy * drag.aspect)));
+  } else { // resize from the bottom-right grip, keeping the GIF's proportions
+    const width = clamp(Math.round(b.width + Math.max(dx, dy * drag.aspect)), 50, 1600);
     drag.win.setBounds({ x: b.x, y: b.y, width, height: Math.round(width / drag.aspect) });
   }
 });
+
 ipcMain.on('drag:end', () => {
   if (drag) saveBounds(drag.id);
   drag = null;
 });
+
+// Mouse wheel over a mascot: resize around its centre.
 ipcMain.on('resize:wheel', (e, deltaY) => {
-  const id = idOf(e.sender), win = overlays.get(id);
+  if (!isNum(deltaY)) return;
+  const id = overlayIdOf(e.sender), win = overlays.get(id);
   if (!win) return;
   const b = win.getBounds(), aspect = b.width / b.height;
-  const width = Math.min(1600, Math.max(50, Math.round(b.width * Math.exp(-deltaY * 0.001))));
+  const width = clamp(Math.round(b.width * Math.exp(-deltaY * 0.001)), 50, 1600);
   const height = Math.round(width / aspect);
   win.setBounds({
     x: Math.round(b.x + (b.width - width) / 2), y: Math.round(b.y + (b.height - height) / 2), width, height,
   });
   saveBounds(id);
 });
+
+// Right-click menu on a mascot.
 ipcMain.on('overlay:menu', (e) => {
-  const id = idOf(e.sender), m = find(id);
+  const id = overlayIdOf(e.sender), m = findMascot(id);
   if (!m) return;
+  /** Apply a change, tell the overlay, and refresh the panel. */
   const set = (patch) => { Object.assign(m, patch); e.sender.send('mascot', m); saveConfig(); pushState(); };
   Menu.buildFromTemplate([
     { label: m.name, enabled: false },
@@ -235,68 +394,92 @@ ipcMain.on('overlay:menu', (e) => {
     { label: 'Speed ×0.5', click: () => set({ speed: 0.5 }) },
     { label: 'Speed ×2', click: () => set({ speed: 2 }) },
     { type: 'separator' },
-    { label: 'Lock all (click-through)', click: () => { config.settings.locked = true; ipcMain.emit('settings:update', null, { locked: true }); } },
-    { label: 'Unload', click: () => { m.enabled = false; closeOverlay(id); saveConfig(); pushState(); } },
+    { label: 'Lock all (click-through)', click: () => ipcMain.emit('settings:update', null, { locked: true }) },
+    { label: 'Unload', click: () => ipcMain.emit('mascot:update', null, id, { enabled: false }) },
   ]).popup();
 });
 
-// ---------- control window / tray ----------
+// ───────────────────────────── Control panel + tray ─────────────────────────────
+
 function createControl() {
   controlWin = new BrowserWindow({
-    width: 480, height: 760, minWidth: 400, title: 'Dancing Mascots',
+    width: 480, height: 800, minWidth: 400, title: 'Dancing Mascots',
     backgroundColor: '#14141a', autoHideMenuBar: true,
     webPreferences: {
-      nodeIntegration: true, contextIsolation: false,
-      backgroundThrottling: false, autoplayPolicy: 'no-user-gesture-required',
+      nodeIntegration: true,   // control.js reads GIFs for thumbnails; only our local page is loaded
+      contextIsolation: false,
+      backgroundThrottling: false, // this window does the audio analysis, so it must keep running when hidden
+      autoplayPolicy: 'no-user-gesture-required',
     },
   });
+  lockDownNavigation(controlWin);
   controlWin.loadFile(path.join(__dirname, '../renderer/control.html'));
-  controlWin.on('minimize', (e) => { e.preventDefault(); controlWin.hide(); }); // minimize to tray, not taskbar
+
+  // Minimize and close both just hide the window to the tray; the app keeps running.
+  controlWin.on('minimize', (e) => { e.preventDefault(); controlWin.hide(); });
   controlWin.on('close', (e) => {
-    if (!quitting) { e.preventDefault(); controlWin.hide(); } // keep analysing audio in the tray
+    if (!quitting) { e.preventDefault(); controlWin.hide(); }
   });
 }
+
 function showControl() { controlWin.show(); controlWin.focus(); }
 
+/** (Re)build the tray right-click menu so it reflects the current mascots and lock state. */
 function updateTrayMenu() {
   if (!tray) return;
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: 'Open control panel', click: showControl },
     { label: 'Lock overlays (click-through)', type: 'checkbox', checked: config.settings.locked,
-      click: (i) => ipcMain.emit('settings:update', null, { locked: i.checked }) },
+      click: (item) => ipcMain.emit('settings:update', null, { locked: item.checked }) },
     { type: 'separator' },
     ...config.mascots.map((m) => ({
       label: m.name, type: 'checkbox', checked: m.enabled,
-      click: (i) => ipcMain.emit('mascot:update', null, m.id, { enabled: i.checked }),
+      click: (item) => ipcMain.emit('mascot:update', null, m.id, { enabled: item.checked }),
     })),
     { type: 'separator' },
     { label: 'Quit', click: () => { quitting = true; app.quit(); } },
   ]));
 }
 
-app.whenReady().then(() => {
-  loadConfig();
+// ───────────────────────────── App lifecycle ─────────────────────────────
 
-  // System-audio capture: answer getDisplayMedia() with a loopback of the output device.
-  session.defaultSession.setDisplayMediaRequestHandler(async (_req, callback) => {
-    try {
-      const sources = await desktopCapturer.getSources({ types: ['screen'] });
-      callback({ video: sources[0], audio: 'loopback' });
-    } catch (e) {
-      console.error('loopback capture failed', e);
-      callback({});
-    }
-  }, { useSystemPicker: false });
+// Only one copy at a time: launching again just reopens the panel.
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+} else {
+  app.on('second-instance', () => { if (controlWin) showControl(); });
 
-  createControl();
-  const icon = nativeImage.createFromPath(path.join(__dirname, '../../assets/icon.png'));
-  tray = new Tray(icon.resize({ width: 16, height: 16 }));
-  tray.setToolTip('Dancing Mascots');
-  tray.on('click', showControl);
-  updateTrayMenu();
+  app.whenReady().then(() => {
+    loadConfig();
 
-  config.mascots.filter((m) => m.enabled).forEach(openOverlay);
-});
+    // Permissions: the only thing our pages ever need is microphone/line-in style audio capture.
+    // Everything else (camera, geolocation, notifications, ...) is refused.
+    const allow = (permission) => permission === 'media';
+    session.defaultSession.setPermissionRequestHandler((_wc, permission, cb) => cb(allow(permission)));
+    session.defaultSession.setPermissionCheckHandler((_wc, permission) => allow(permission));
 
-app.on('before-quit', () => { quitting = true; });
-app.on('window-all-closed', () => { /* stay alive in the tray */ });
+    // System-audio capture: the control panel calls getDisplayMedia(); we answer with a
+    // loopback of the default output device (Windows WASAPI loopback = "what you hear").
+    session.defaultSession.setDisplayMediaRequestHandler(async (_req, callback) => {
+      try {
+        const sources = await desktopCapturer.getSources({ types: ['screen'] });
+        callback({ video: sources[0], audio: 'loopback' });
+      } catch (e) {
+        console.error('loopback capture failed', e);
+        callback({}); // the panel shows an "Audio error" status
+      }
+    }, { useSystemPicker: false });
+
+    createControl();
+
+    tray = new Tray(nativeImage.createFromPath(path.join(__dirname, '../../assets/icon.png')).resize({ width: 16, height: 16 }));
+    tray.setToolTip('Dancing Mascots');
+    tray.on('click', showControl);
+    updateTrayMenu();
+
+    config.mascots.filter((m) => m.enabled).forEach(openOverlay); // restore last session
+  });
+
+  app.on('before-quit', () => { quitting = true; });
+  app.on('window-all-closed', () => { /* keep running in the tray */ });
+}

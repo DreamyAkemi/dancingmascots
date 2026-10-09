@@ -1,46 +1,83 @@
 'use strict';
+/**
+ * overlay.js — runs inside each mascot's transparent window.
+ *
+ * Job: play one GIF, with the playback speed driven by the music tempo, and (optionally)
+ * pulse on every beat. Also handles dragging, resizing and the right-click menu.
+ *
+ * Why not just use an <img>? A browser plays GIFs at a fixed speed. To change the speed we
+ * decode the GIF ourselves (gifuct-js) and draw the frames onto a <canvas> on our own clock.
+ */
 const { ipcRenderer } = require('electron');
 const fs = require('fs');
 const { parseGIF, decompressFrame } = require('gifuct-js');
 const { foldedRate } = require('../shared/tempo');
 
-const view = document.getElementById('view');
+// ───────────────────────────── Limits (protect against huge / hostile GIFs) ─────────────────────────────
+const MAX_FILE_BYTES = 100 * 1024 * 1024;
+const MAX_DIMENSION = 4096;   // px, width or height
+const MAX_FRAMES = 3000;
+const CACHE_BYTES = 24 * 1024 * 1024; // decoded frames are cached only if the whole GIF fits in this
+
+// ───────────────────────────── DOM + state ─────────────────────────────
+const view = document.getElementById('view');        // the visible canvas
 const vctx = view.getContext('2d');
-const grip = document.getElementById('grip');
+const grip = document.getElementById('grip');        // bottom-right resize handle
+const bounceEl = document.getElementById('bounce');  // wrapper we scale for the beat effect
 
-let mascot = null, settings = null, tempo = { playing: false, bpm: null };
-let frames = [], raw = [], gct = null, cur = 0, acc = 0;
-// Decoded RGBA patches are big (frames x w x h x 4), so only cache them when the whole loop is small.
-const CACHE_BYTES = 24 * 1024 * 1024;
-let patchCache = null;
-let targetRate = 0, rate = 0; // rate = playback speed multiplier relative to the gif's own timing
+let mascot = null;                              // this mascot's record from the main process
+let settings = null;                            // global settings
+let tempo = { playing: false, bpm: null, beat: null, period: null }; // latest from the audio analysis
 
-// Compositing state for the gif's frame disposal rules.
+// GIF data. `frames` holds only light metadata; pixels are decoded on demand (saves a lot of RAM).
+let frames = [];        // [{ dims, disposalType, delay }]
+let raw = [];           // parsed-but-still-compressed frames
+let gct = null;         // GIF global colour table
+let patchCache = null;  // Map(frameIndex -> pixels) when the GIF is small enough to cache
+let cur = 0;            // index of the frame currently shown
+let acc = 0;            // milliseconds accumulated towards the next frame
+
+// Playback speed multiplier (1 = the GIF's own timing). `rate` chases `targetRate` smoothly.
+let rate = 0;
+
+// GIF frames are small patches drawn over the previous result, so we composite on a hidden canvas.
 const canvas = document.createElement('canvas');
-const ctx = canvas.getContext('2d', { willReadFrequently: false });
+const ctx = canvas.getContext('2d');
 const patchCanvas = document.createElement('canvas');
 const patchCtx = patchCanvas.getContext('2d');
-let restore = null;
+let restore = null; // saved image for the "restore to previous" disposal method
 
+// ───────────────────────────── Loading + decoding ─────────────────────────────
+
+/** Read and parse the GIF, set up the canvases, and draw the first frame. */
 function load(path) {
+  if (fs.statSync(path).size > MAX_FILE_BYTES) throw new Error('GIF file is too large');
   const buf = fs.readFileSync(path);
   const gif = parseGIF(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength));
+
+  const { width, height } = gif.lsd;
+  if (!width || !height || width > MAX_DIMENSION || height > MAX_DIMENSION) throw new Error('GIF dimensions are not supported');
+
   gct = gif.gct;
   raw = gif.frames.filter((f) => f.image);
-  // Keep only lightweight metadata per frame; pixels are decoded on demand while playing.
+  if (!raw.length || raw.length > MAX_FRAMES) throw new Error('GIF has an unsupported number of frames');
+
+  // One pass to collect per-frame metadata; the decoded pixels are thrown away straight away.
   frames = raw.map((f) => {
     const { dims, disposalType, delay } = decompressFrame(f, gct, false);
     return { dims, disposalType, delay };
   });
-  const { width, height } = gif.lsd;
+
   patchCache = frames.length * width * height * 4 <= CACHE_BYTES ? new Map() : null;
   canvas.width = view.width = width;
   canvas.height = view.height = height;
-  ipcRenderer.send('overlay:aspect', width / height, width);
   cur = 0; acc = 0; restore = null;
+
+  ipcRenderer.send('overlay:aspect', width / height, width); // lets the main process size the window
   drawFrame(0);
 }
 
+/** Pixels (RGBA) of frame i, decoded on demand and cached when affordable. */
 function getPatch(i) {
   if (patchCache && patchCache.has(i)) return patchCache.get(i);
   const { patch } = decompressFrame(raw[i], gct, true);
@@ -48,39 +85,76 @@ function getPatch(i) {
   return patch;
 }
 
+/**
+ * Draw frame i onto the visible canvas, honouring the GIF "disposal" rules:
+ * what to do with the previous frame's area before drawing the next one.
+ *   2 = clear that area to transparent, 3 = restore what was there before it.
+ */
 function drawFrame(i) {
   const f = frames[i], prev = frames[(i - 1 + frames.length) % frames.length];
-  if (i === 0) ctx.clearRect(0, 0, canvas.width, canvas.height);
-  else if (prev.disposalType === 2) {
-    ctx.clearRect(prev.dims.left, prev.dims.top, prev.dims.width, prev.dims.height);
-  } else if (prev.disposalType === 3 && restore) ctx.putImageData(restore, 0, 0);
+
+  if (i === 0) ctx.clearRect(0, 0, canvas.width, canvas.height); // looped back to the start
+  else if (prev.disposalType === 2) ctx.clearRect(prev.dims.left, prev.dims.top, prev.dims.width, prev.dims.height);
+  else if (prev.disposalType === 3 && restore) ctx.putImageData(restore, 0, 0);
+
   if (f.disposalType === 3) restore = ctx.getImageData(0, 0, canvas.width, canvas.height);
+
   const { width, height, left, top } = f.dims;
   patchCanvas.width = width; patchCanvas.height = height;
   patchCtx.putImageData(new ImageData(getPatch(i), width, height), 0, 0);
   ctx.drawImage(patchCanvas, left, top);
+
   vctx.clearRect(0, 0, view.width, view.height);
   vctx.drawImage(canvas, 0, 0);
 }
 
-const frameDelay = (f) => (f.delay <= 10 ? 100 : f.delay); // browsers treat 0/10ms delays as 100ms
+/** A frame's display time in ms. Browsers treat 0/10 ms delays as 100 ms; so do we. */
+const frameDelay = (f) => (f.delay <= 10 ? 100 : f.delay);
 
+// ───────────────────────────── Speed + beat logic ─────────────────────────────
+
+/** The speed this mascot *should* have right now (0 = paused). */
 function computeTargetRate() {
-  if (!mascot || !settings || !tempo.playing) return 0;
+  if (!mascot || !settings || !tempo.playing) return 0;               // silence → freeze
   const bpm = settings.tempoMode === 'manual' ? settings.manualBpm : tempo.bpm;
-  if (!bpm) return 0;
+  if (!bpm) return 0;                                                  // no tempo detected yet
   const r = foldedRate(bpm * settings.octave, mascot.baseBpm || 120, mascot.smart !== false)
     * (mascot.speed || 1) * (settings.globalSpeed || 1);
   return Math.min(6, Math.max(0, r));
 }
 
+/**
+ * Beat pulse in 0..1: jumps to 1 right on the beat and decays quickly (0 between beats).
+ * Uses the beat grid from the audio analysis; in manual mode there is no audio sync,
+ * so we just pulse at the manual tempo.
+ */
+function beatPulse() {
+  const octave = settings.octave || 1;
+  let beatAt, period;
+  if (settings.tempoMode === 'manual') {
+    beatAt = 0; period = 60 / settings.manualBpm / octave;
+  } else {
+    if (tempo.beat === null || tempo.period === null) return 0;
+    beatAt = tempo.beat; period = tempo.period / octave;
+  }
+  const since = (Date.now() - beatAt) / 1000;             // seconds since a known beat
+  const phase = (((since % period) + period) % period) / period; // 0 at the beat → 1 just before the next
+  return Math.exp(-phase * 7);
+}
+
+// ───────────────────────────── Main animation loop ─────────────────────────────
 let last = performance.now();
+
 function tick(now) {
-  const dt = Math.min(100, now - last);
+  const dt = Math.min(100, now - last); // cap so a long stall doesn't make the GIF skip ahead
   last = now;
-  targetRate = computeTargetRate();
-  rate += (targetRate - rate) * Math.min(1, dt / 250); // ease so tempo changes glide
+
+  // Ease the speed so tempo changes glide instead of snapping.
+  const targetRate = computeTargetRate();
+  rate += (targetRate - rate) * Math.min(1, dt / 250);
   if (targetRate === 0 && rate < 0.01) rate = 0;
+
+  // Advance frames according to elapsed time × speed.
   if (frames.length > 1 && rate > 0) {
     acc += dt * rate;
     let advanced = false;
@@ -91,17 +165,25 @@ function tick(now) {
     }
     if (advanced) drawFrame(cur);
   }
+
+  // Optional beat bounce: rest slightly squashed, snap to full height on each beat.
+  if (settings && settings.bounce && tempo.playing) {
+    const squash = 0.2 * settings.bounceStrength;
+    bounceEl.style.transform = `scale(${1 - 0.3 * squash * (1 - beatPulse())}, ${1 - squash * (1 - beatPulse())})`;
+  } else {
+    bounceEl.style.transform = '';
+  }
+
   requestAnimationFrame(tick);
 }
 
-function applyMascot() {
-  view.classList.toggle('flip', !!mascot.flip);
-}
-function applySettings() {
-  document.body.classList.toggle('locked', !!settings.locked);
-}
+// ───────────────────────────── Applying settings ─────────────────────────────
+function applyMascot() { view.classList.toggle('flip', !!mascot.flip); }
+function applySettings() { document.body.classList.toggle('locked', !!settings.locked); }
 
-// ----- interaction: drag to move, grip / wheel to resize, right-click menu -----
+// ───────────────────────────── Interaction ─────────────────────────────
+// The window is frameless, so we report pointer movement to the main process, which moves/resizes
+// the window. setPointerCapture keeps events flowing even if the pointer leaves the (small) window.
 function startDrag(e, mode) {
   e.preventDefault();
   e.currentTarget.setPointerCapture(e.pointerId);
@@ -117,14 +199,17 @@ for (const [el, mode] of [[view, 'move'], [grip, 'resize']]) {
 window.addEventListener('wheel', (e) => ipcRenderer.send('resize:wheel', e.deltaY), { passive: true });
 window.addEventListener('contextmenu', (e) => { e.preventDefault(); ipcRenderer.send('overlay:menu'); });
 
+// Updates pushed from the main process.
 ipcRenderer.on('mascot', (_e, m) => { mascot = m; applyMascot(); });
 ipcRenderer.on('settings', (_e, s) => { settings = s; applySettings(); });
 ipcRenderer.on('tempo', (_e, t) => { tempo = t; });
 
+// ───────────────────────────── Startup ─────────────────────────────
 (async () => {
   const init = await ipcRenderer.invoke('overlay:init');
+  if (!init) return; // not a known mascot window
   ({ mascot, settings, tempo } = init);
   applyMascot(); applySettings();
-  try { load(mascot.path); } catch (e) { console.error('Could not load gif', e); }
+  try { load(mascot.path); } catch (e) { console.error('Could not load gif:', e.message); }
   requestAnimationFrame(tick);
 })();

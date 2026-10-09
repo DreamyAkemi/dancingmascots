@@ -45,3 +45,19 @@ test('foldedRate picks nearest to natural speed', () => {
   assert.strictEqual(foldedRate(60, 120, true), 1); // 0.5 -> doubled
   assert.strictEqual(foldedRate(60, 120, false), 0.5);
 });
+
+test('beat grid lines up with the kicks', () => {
+  const bpm = 120, beat = 60 / bpm;
+  const tr = new TempoTracker();
+  let t = 0, st;
+  while (t < 14) {
+    const phase = (t % beat) / beat;
+    tr.push(t, 20 * Math.exp(-phase * 25), 0.1);
+    t += 1 / 60;
+    if (Math.floor(t * 2) !== Math.floor((t - 1 / 60) * 2)) st = tr.update();
+  }
+  assert.ok(st.beatT !== null && Math.abs(st.period - beat) < 0.02);
+  // Kicks happen at multiples of `beat`; the grid must agree within ~60 ms.
+  const off = ((st.beatT % beat) + beat) % beat;
+  assert.ok(Math.min(off, beat - off) < 0.06, `grid off by ${off}`);
+});

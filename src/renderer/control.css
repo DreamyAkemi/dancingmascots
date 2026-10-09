@@ -27,3 +27,4 @@ h2 button { text-transform: none; letter-spacing: 0; color: var(--fg); }
 .ctl { grid-column: 2 / 4; display: flex; gap: 10px; align-items: center; color: var(--dim); font-size: 12px; flex-wrap: wrap; }
 .ctl input[type=range] { min-width: 80px; } .ctl input[type=number] { width: 58px; }
 footer { display: flex; justify-content: space-between; align-items: center; margin-top: auto; color: var(--dim); }
+.empty { color: var(--dim); text-align: center; }

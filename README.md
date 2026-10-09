@@ -39,6 +39,7 @@ seconds to lock on after a song starts and glides between speeds. No sound for ~
 | Auto-detect / Manual / Tap | Use detected BPM, or type/tap one |
 | ½× / 1× / 2× | Fix half-time/double-time detection mistakes |
 | All mascots speed | Global multiplier |
+| Bounce on the beat | Squash-and-stretch pulse on every detected beat (with a strength slider) |
 | Per-mascot Speed | Multiplier for one GIF |
 | "Loop looks right at N BPM" | The tempo at which that GIF plays at its natural speed (default 120) |
 | ½/2× smart | Lets a GIF use half/double time if that keeps it closer to its natural speed |
@@ -49,3 +50,23 @@ If it ever fails, pick "Stereo Mix" or a virtual cable as the audio source.
 ## Dev
 
 `npm test` runs the tempo detector against synthetic drum tracks.
+
+## Code map
+
+| File | Role |
+| --- | --- |
+| `src/main/main.js` | Main process: config, overlay windows, tray, IPC, input validation |
+| `src/renderer/control.js` | Control panel UI + audio capture and tempo analysis |
+| `src/renderer/overlay.js` | One mascot window: GIF playback, speed, beat bounce, drag/resize |
+| `src/shared/tempo.js` | Tempo/beat detection and speed maths (unit-tested) |
+
+## Security notes
+
+- Windows run with Node integration because they read your GIF files directly, so they only ever load
+  the app's own local pages: navigation and `window.open` are blocked, and each page has a strict
+  Content-Security-Policy.
+- All IPC messages and the saved `config.json` are validated (known keys, types, ranges); nothing from
+  them is inserted as HTML.
+- GIFs are size-limited (100 MB, 4096 px, 3000 frames). Only audio capture permission is granted.
+- The app makes no network connections and collects nothing.
+- The Windows builds are unsigned (SmartScreen warning on first run).
