@@ -1,20 +1,20 @@
-## Dancing Mascots 1.0.1
+## Dancing Mascots 1.0.2
 
 Dancing GIFs on your desktop that move to the tempo of whatever you're listening to.
 
 ### Download
 
-- **`Dancing Mascots Setup 1.0.1.exe`** installs it like a normal program (recommended).
-- **`Dancing Mascots 1.0.1.exe`** is the portable version: no install, just run it.
+- **`Dancing Mascots Setup 1.0.2.exe`** installs it like a normal program (recommended).
+- **`Dancing Mascots 1.0.2.exe`** is the portable version: no install, just run it.
 
 Windows 10 or 11. Windows may warn about an "Unknown publisher" because the app isn't signed with a paid
 certificate: click **More info**, then **Run anyway**.
 
-### What's new in 1.0.1
+### What's new in 1.0.2
 
-- **Compatibility mode:** a new checkbox for PCs where mascots show up with a white or black box around them.
-  Tick it, click *Restart now*, and the app draws without the graphics card.
-- **Copy diagnostics:** a button that copies technical info (graphics card, screens, settings) to paste into a bug report.
+- **Fix for GIFs showing a white box** on some PCs: frames are now assembled by the app itself instead of by
+  the graphics card, so transparent GIFs look the same everywhere. Frames are also never skipped on fast songs.
+- Removed the "Compatibility mode" checkbox added in 1.0.1: it didn't help.
 
 ### Highlights
 
