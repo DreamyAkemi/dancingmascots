@@ -74,7 +74,6 @@ graph shows how it's doing.
 | --- | --- |
 | **Keep mascots above other windows** | On: always visible. Off: other windows can cover them. |
 | **Pause & hide while another app is fullscreen** | Saves performance during games and videos. Only affects mascots on that monitor. |
-| **Compatibility mode** | Draws without the graphics card. Try it if mascots show a white or black box around them. Needs a restart. |
 | **Launch at Windows startup** | Starts the app hidden in the tray when you log in. |
 
 ### Each mascot
@@ -107,8 +106,10 @@ Click **Reset positions** at the bottom of the panel. If you unplug a monitor, m
 main screen automatically.
 
 **Mascots have a white (or black) box around them.**
-Turn on **Compatibility mode** in the panel and click **Restart now**. If it still happens, click
-**Copy diagnostics** and include the text when you report the problem.
+The GIF itself most likely has a solid white (or black) background instead of a transparent one, so it
+shows as a rectangle. To check, open the GIF in a browser tab with a dark theme: if the white is still there,
+it's part of the picture. Chat apps and some download sites flatten transparency when a GIF is re-saved or
+converted, so get the original file when you can.
 
 **I can't grab a mascot.**
 **Lock overlays** is probably on. Untick it in the panel, or in the tray menu.

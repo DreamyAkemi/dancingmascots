@@ -27,12 +27,6 @@ const { watchFullscreen } = require('./fullscreen');
 // drawing, so sharing a process costs nothing noticeable.
 app.commandLine.appendSwitch('process-per-site');
 
-// Compatibility mode must be decided BEFORE the app is ready, so read just that one setting
-// straight from the config file here (the full config is loaded later).
-try {
-  const early = JSON.parse(fs.readFileSync(path.join(app.getPath('userData'), 'config.json'), 'utf8'));
-  if (early && early.settings && early.settings.softwareRendering === true) app.disableHardwareAcceleration();
-} catch { /* no config yet: normal GPU rendering */ }
 
 // ───────────────────────────── Constants ─────────────────────────────
 
@@ -55,7 +49,6 @@ const DEFAULT_SETTINGS = {
   pauseOnFullscreen: true, // pause + hide mascots on a monitor while another app is fullscreen there
   launchAtLogin: false,    // start with Windows (hidden in the tray)
   alwaysOnTop: true,       // true = mascots stay above other windows; false = behave like a normal window
-  softwareRendering: false, // compatibility mode: draw without the GPU (fixes white/black boxes on some PCs)
 };
 
 // ───────────────────────────── State ─────────────────────────────
@@ -105,7 +98,6 @@ function sanitizeSettings(src) {
   if (typeof src.pauseOnFullscreen === 'boolean') out.pauseOnFullscreen = src.pauseOnFullscreen;
   if (typeof src.launchAtLogin === 'boolean') out.launchAtLogin = src.launchAtLogin;
   if (typeof src.alwaysOnTop === 'boolean') out.alwaysOnTop = src.alwaysOnTop;
-  if (typeof src.softwareRendering === 'boolean') out.softwareRendering = src.softwareRendering;
   return out;
 }
 
@@ -564,7 +556,6 @@ async function buildDiagnostics() {
     `Dancing Mascots ${app.getVersion()}${process.env.PORTABLE_EXECUTABLE_FILE ? ' (portable)' : ''}`,
     `Windows ${process.getSystemVersion()} ${process.arch}`,
     `Electron ${process.versions.electron} / Chromium ${process.versions.chrome}`,
-    `Software rendering setting: ${config.settings.softwareRendering ? 'ON' : 'off'}`,
     `GPU feature status: ${JSON.stringify(app.getGPUFeatureStatus())}`,
     'GPU devices:', ...(devices.length ? devices : ['  (none reported)']),
     'Displays:', ...displays,
@@ -578,13 +569,6 @@ ipcMain.handle('diagnostics', async () => {
   const text = await buildDiagnostics();
   clipboard.writeText(text);
   return text;
-});
-
-// "Restart now" button (needed after changing compatibility mode). Also works for the portable build.
-ipcMain.on('app:restart', () => {
-  quitting = true;
-  app.relaunch({ execPath: process.env.PORTABLE_EXECUTABLE_FILE || process.execPath });
-  app.exit(0);
 });
 
 // ───────────────────────────── Launch at login ─────────────────────────────
