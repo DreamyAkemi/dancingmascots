@@ -12,8 +12,8 @@ certificate: click **More info**, then **Run anyway**.
 
 ### What's new in 1.0.3
 
-- **Fixed: a newly added GIF showed a white box** around it on many PCs until the app was restarted. New mascots
-  now open at their final size straight away.
+- **Fixed: GIFs you add while the app is running no longer get a white box** around them. Before, they only
+  looked right after restarting the app. (Each mascot now runs in its own process, which uses a little more memory.)
 - GIF frames are now assembled by the app itself, and frames are never skipped on fast songs.
 - Removed the "Compatibility mode" checkbox from 1.0.1: it didn't help.
 - "Copy diagnostics" now also describes each open GIF, which helps when reporting a problem.
