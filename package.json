@@ -1,6 +1,6 @@
 {
   "name": "dancingmascots",
-  "version": "1.0.3",
+  "version": "1.0.5",
   "description": "Desktop overlay mascots that dance to the tempo of whatever you're listening to",
   "main": "src/main/main.js",
   "scripts": {

@@ -12,7 +12,6 @@ const { ipcRenderer } = require('electron');
 const fs = require('fs');
 const { parseGIF, decompressFrame } = require('gifuct-js');
 const { foldedRate } = require('../shared/tempo');
-const { createCompositor } = require('../shared/gifcomposite');
 
 // ───────────────────────────── Limits (protect against huge / hostile GIFs) ─────────────────────────────
 const MAX_FILE_BYTES = 100 * 1024 * 1024;
@@ -46,10 +45,12 @@ let looping = false; // is the requestAnimationFrame loop currently running?
 // Playback speed multiplier (1 = the GIF's own timing). `rate` chases `targetRate` smoothly.
 let rate = 0;
 
-// The picture is composed in plain memory (see gifcomposite.js) and copied to the visible canvas
-// with a single putImageData per frame. No canvas-to-canvas blending, so it looks the same on every PC.
-let compositor = null; // current GIF's frame composer
-let imageData = null;  // ImageData view over the compositor's pixel buffer
+// GIF frames are small patches drawn over the previous result, so we composite on a hidden canvas.
+const canvas = document.createElement('canvas');
+const ctx = canvas.getContext('2d');
+const patchCanvas = document.createElement('canvas');
+const patchCtx = patchCanvas.getContext('2d');
+let restore = null; // saved image for the "restore to previous" disposal method
 
 // ───────────────────────────── Loading + decoding ─────────────────────────────
 
@@ -73,15 +74,12 @@ function load(path) {
   });
 
   patchCache = frames.length * width * height * 4 <= CACHE_BYTES ? new Map() : null;
-  view.width = width;
-  view.height = height;
-  compositor = createCompositor(width, height);
-  imageData = new ImageData(compositor.pixels, width, height);
-  cur = 0; acc = 0;
+  canvas.width = view.width = width;
+  canvas.height = view.height = height;
+  cur = 0; acc = 0; restore = null;
 
   ipcRenderer.send('overlay:aspect', width / height, width); // lets the main process size the window
-  composeFrame(0);
-  showPicture();
+  drawFrame(0);
 }
 
 /** Pixels (RGBA) of frame i, decoded on demand and cached when affordable. */
@@ -93,17 +91,26 @@ function getPatch(i) {
 }
 
 /**
- * Apply frame i to the composed picture (honouring GIF disposal rules). Frames must be applied
- * in order, one by one, because most GIFs store each frame as a small change on top of the last
- * one. "Previous" is the frame before (the first frame of a loop starts from a blank picture).
+ * Draw frame i onto the visible canvas, honouring the GIF "disposal" rules:
+ * what to do with the previous frame's area before drawing the next one.
+ *   2 = clear that area to transparent, 3 = restore what was there before it.
  */
-function composeFrame(i) {
-  compositor.draw(i === 0 ? null : frames[i - 1], frames[i], getPatch(i));
-}
+function drawFrame(i) {
+  const f = frames[i], prev = frames[(i - 1 + frames.length) % frames.length];
 
-/** Copy the composed picture to the screen. putImageData replaces every pixel, transparent ones too. */
-function showPicture() {
-  vctx.putImageData(imageData, 0, 0);
+  if (i === 0) ctx.clearRect(0, 0, canvas.width, canvas.height); // looped back to the start
+  else if (prev.disposalType === 2) ctx.clearRect(prev.dims.left, prev.dims.top, prev.dims.width, prev.dims.height);
+  else if (prev.disposalType === 3 && restore) ctx.putImageData(restore, 0, 0);
+
+  if (f.disposalType === 3) restore = ctx.getImageData(0, 0, canvas.width, canvas.height);
+
+  const { width, height, left, top } = f.dims;
+  patchCanvas.width = width; patchCanvas.height = height;
+  patchCtx.putImageData(new ImageData(getPatch(i), width, height), 0, 0);
+  ctx.drawImage(patchCanvas, left, top);
+
+  vctx.clearRect(0, 0, view.width, view.height);
+  vctx.drawImage(canvas, 0, 0);
 }
 
 /** A frame's display time in ms. Browsers treat 0/10 ms delays as 100 ms; so do we. */
@@ -160,10 +167,9 @@ function tick(now) {
     while (acc >= frameDelay(frames[cur])) {
       acc -= frameDelay(frames[cur]);
       cur = (cur + 1) % frames.length;
-      composeFrame(cur); // every frame in turn, even if several are due at once (they build on each other)
       advanced = true;
     }
-    if (advanced) showPicture();
+    if (advanced) drawFrame(cur);
   }
 
   // Optional beat bounce: rest slightly squashed, snap to full height on each beat.
@@ -212,34 +218,6 @@ ipcRenderer.on('mascot', (_e, m) => { mascot = m; applyMascot(); });
 ipcRenderer.on('settings', (_e, s) => { settings = s; applySettings(); });
 ipcRenderer.on('tempo', (_e, t) => { tempo = t; });
 ipcRenderer.on('paused', (_e, p) => { paused = p; if (!paused) startLoop(); });
-
-// ───────────────────────────── Diagnostics ─────────────────────────────
-// The main process calls this when the user clicks "Copy diagnostics". It describes the GIF and
-// measures how transparent the picture really is, both in memory and on the canvas, which tells us
-// whether a "white box" comes from the picture data or from how the window is drawn.
-window.__gifInfo = () => {
-  const count = (data) => { let n = 0; for (let i = 3; i < data.length; i += 4) if (data[i] === 0) n++; return n; };
-  const total = view.width * view.height;
-  const pct = (n) => `${(100 * n / total).toFixed(1)}%`;
-  const disposals = {};
-  frames.forEach((f) => { disposals[f.disposalType] = (disposals[f.disposalType] || 0) + 1; });
-  const croppedFrames = frames.filter((f) => f.dims.width < view.width || f.dims.height < view.height).length;
-  const attrs = vctx.getContextAttributes ? vctx.getContextAttributes() : {};
-  return {
-    name: mascot && mascot.name,
-    size: `${view.width}x${view.height}`,
-    frames: frames.length,
-    croppedFrames,
-    disposalMethods: disposals,
-    firstFrameDims: frames[0] ? JSON.stringify(frames[0].dims) : null,
-    transparentInMemory: compositor ? pct(count(compositor.pixels)) : null,
-    transparentOnCanvas: pct(count(vctx.getImageData(0, 0, view.width, view.height).data)),
-    canvasAlpha: attrs.alpha,
-    devicePixelRatio: window.devicePixelRatio,
-    currentFrame: cur,
-    paused,
-  };
-};
 
 // ───────────────────────────── Startup ─────────────────────────────
 (async () => {

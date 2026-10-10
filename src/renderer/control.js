@@ -217,6 +217,7 @@ function drawGraph() {
 }
 $('graphBox').addEventListener('toggle', drawGraph);
 
+let knownMascotCount = null; // used to notice when a mascot has just been added (see render)
 let lastKey = ''; // fingerprint of the mascot list structure (see render)
 
 /** Sync every control with `state`, and rebuild the mascot list if its structure changed. */
@@ -239,6 +240,10 @@ function render() {
   for (const b of $('octave').children) b.classList.toggle('on', +b.dataset.v === s.octave);
   if ($('audioSource').value !== s.audioSource && !$('audioSource').matches(':focus')) $('audioSource').value = s.audioSource;
   renderStatus();
+
+  // When a mascot is added while the app is running, remind the user how to fix the white-box glitch.
+  if (knownMascotCount !== null && state.mascots.length > knownMascotCount) $('restartNotice').hidden = false;
+  knownMascotCount = state.mascots.length;
 
   // Rebuild the list only when something structural changed, so dragging a slider
   // isn't interrupted by the list being recreated under the mouse.
@@ -369,6 +374,9 @@ $('globalSpeed').oninput = (e) => {
 $('locked').onchange = (e) => update({ locked: e.target.checked });
 $('bounce').onchange = (e) => update({ bounce: e.target.checked });
 $('pauseFs').onchange = (e) => update({ pauseOnFullscreen: e.target.checked });
+$('restart').onclick = () => ipcRenderer.send('app:restart');
+$('restartNow').onclick = () => ipcRenderer.send('app:restart');
+$('dismissNotice').onclick = () => { $('restartNotice').hidden = true; };
 $('diag').onclick = async () => {
   await ipcRenderer.invoke('diagnostics'); // main copies it to the clipboard
   $('diag').textContent = 'Copied!';

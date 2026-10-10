@@ -74,6 +74,7 @@ graph shows how it's doing.
 | --- | --- |
 | **Keep mascots above other windows** | On: always visible. Off: other windows can cover them. |
 | **Pause & hide while another app is fullscreen** | Saves performance during games and videos. Only affects mascots on that monitor. |
+| **Restart app** | Restarts the app. Use it if a mascot you just added shows a white box. |
 | **Launch at Windows startup** | Starts the app hidden in the tray when you log in. |
 
 ### Each mascot
@@ -105,11 +106,11 @@ or ones with tempo changes) are hard to read automatically.
 Click **Reset positions** at the bottom of the panel. If you unplug a monitor, mascots on it move to your
 main screen automatically.
 
-**Mascots have a white (or black) box around them.**
-Update to the latest version, which fixes this for newly added GIFs. On older versions, quit the app from
-the tray icon and start it again. If a GIF still has the box after that, it most likely has a solid
-background baked into the picture (chat apps and some download sites flatten transparency when a GIF is
-re-saved). Try the original file.
+**A mascot I just added has a white box around it.**
+This is a known glitch on some Windows PCs. Click **Restart app** in the panel (the panel also offers it right
+after you add a GIF). Your mascots come straight back and the box is gone. If a GIF still has a solid
+background after restarting, the picture itself isn't transparent (chat apps and some download sites flatten
+transparency when a GIF is re-saved), so try the original file.
 
 **I can't grab a mascot.**
 **Lock overlays** is probably on. Untick it in the panel, or in the tray menu.
