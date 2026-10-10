@@ -74,7 +74,6 @@ graph shows how it's doing.
 | --- | --- |
 | **Keep mascots above other windows** | On: always visible. Off: other windows can cover them. |
 | **Pause & hide while another app is fullscreen** | Saves performance during games and videos. Only affects mascots on that monitor. |
-| **Efficient mode** | Off by default. Prepares each GIF once at the size it is shown at, which uses much less processor (in my tests about 70% less with several mascots). Mascots may take a second longer to appear. Memory use depends on the GIF: it helps most with GIFs that have few frames. |
 | **Restart app** | Restarts the app. Use it if a mascot you just added shows a white box. |
 | **Launch at Windows startup** | Starts the app hidden in the tray when you log in. |
 
@@ -121,11 +120,14 @@ Click the app's icon in the system tray (bottom right, near the clock; you may n
 
 ## Keeping it light with many mascots
 
-- **Shrink big GIFs.** Memory and processor use grow with a GIF's width × height × number of frames. Mascots are
-  shown at roughly 250 to 300 pixels, so resizing a 480 px GIF to about 300 px (for example with ezgif.com's
-  *Resize* and *Optimize* tools) saves a lot without any visible difference.
-- **Try Efficient mode** if the processor use is high.
-- **Turn off mascots you aren't using** with their On/Off switch.
+The app itself needs a fixed amount of memory, and then each mascot adds to it. How much a mascot adds depends
+on its GIF: **memory and processor use grow with width × height × number of frames.** Mascots are shown at
+roughly 250 to 300 pixels, so a GIF that is much bigger than that carries a lot of detail you never see.
+
+- **Shrink big GIFs.** Resizing a 480 px GIF to about 300 px (for example with ezgif.com's *Resize* tool, then
+  *Optimize*) makes it use noticeably less memory and processor, with no visible difference at that size.
+  GIFs with fewer frames help too.
+- **Switch off mascots you aren't using** with their On/Off switch.
 
 ## Privacy
 

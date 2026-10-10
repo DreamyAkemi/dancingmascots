@@ -51,7 +51,6 @@ const DEFAULT_SETTINGS = {
   pauseOnFullscreen: true, // pause + hide mascots on a monitor while another app is fullscreen there
   launchAtLogin: false,    // start with Windows (hidden in the tray)
   alwaysOnTop: true,       // true = mascots stay above other windows; false = behave like a normal window
-  lowMemory: false,        // "Efficient mode": prepare every frame once at its on-screen size (much less CPU)
 };
 
 // ───────────────────────────── State ─────────────────────────────
@@ -101,7 +100,6 @@ function sanitizeSettings(src) {
   if (typeof src.pauseOnFullscreen === 'boolean') out.pauseOnFullscreen = src.pauseOnFullscreen;
   if (typeof src.launchAtLogin === 'boolean') out.launchAtLogin = src.launchAtLogin;
   if (typeof src.alwaysOnTop === 'boolean') out.alwaysOnTop = src.alwaysOnTop;
-  if (typeof src.lowMemory === 'boolean') out.lowMemory = src.lowMemory;
   return out;
 }
 
@@ -156,6 +154,12 @@ function saveConfig() {
   saveTimer = setTimeout(() => {
     try { fs.writeFileSync(CONFIG_FILE(), JSON.stringify(config, null, 2)); } catch (e) { console.error(e); }
   }, 200);
+}
+
+/** Write config.json right now (used just before the app restarts or quits, so nothing is lost). */
+function flushConfig() {
+  clearTimeout(saveTimer);
+  try { fs.writeFileSync(CONFIG_FILE(), JSON.stringify(config, null, 2)); } catch (e) { console.error(e); }
 }
 
 const findMascot = (id) => config.mascots.find((m) => m.id === id);
@@ -382,10 +386,7 @@ ipcMain.on('mascot:reset-positions', () => { // everything back onto the primary
 // Global settings (also used by the tray menu and the overlay right-click menu).
 ipcMain.on('settings:update', (_e, rawPatch) => {
   const patch = sanitizeSettings(rawPatch);
-  const efficientModeChanged = 'lowMemory' in patch && patch.lowMemory !== config.settings.lowMemory;
   Object.assign(config.settings, patch);
-  // Efficient mode is chosen when a mascot loads, so reload the overlay pages to switch modes.
-  if (efficientModeChanged) for (const w of overlays.values()) if (!w.isDestroyed()) w.webContents.reload();
   if ('locked' in patch) for (const w of overlays.values()) w.setIgnoreMouseEvents(config.settings.locked);
   if ('alwaysOnTop' in patch) for (const w of overlays.values()) if (!w.isDestroyed()) applyStacking(w);
   if ('pauseOnFullscreen' in patch) applyFullscreen();
@@ -578,10 +579,17 @@ ipcMain.handle('diagnostics', async () => {
   return text;
 });
 
-// "Restart now" button (needed after changing compatibility mode). Also works for the portable build.
+// "Restart app" button / banner. Restarting clears the white-box glitch some PCs show for a mascot that was
+// added while the app was running. Also works for the portable build.
 ipcMain.on('app:restart', () => {
   quitting = true;
-  app.relaunch({ execPath: process.env.PORTABLE_EXECUTABLE_FILE || process.execPath });
+  flushConfig();
+  app.releaseSingleInstanceLock(); // so the new copy can start before this one has fully gone
+  app.relaunch({
+    execPath: process.env.PORTABLE_EXECUTABLE_FILE || process.execPath,
+    // Keep any start-up flags, but not --hidden (after a restart you want to see the panel).
+    args: process.argv.slice(1).filter((a) => a !== '--hidden' && a !== '--relaunched').concat('--relaunched'),
+  });
   app.exit(0);
 });
 
@@ -600,10 +608,17 @@ function applyLoginItem() {
 
 // ───────────────────────────── App lifecycle ─────────────────────────────
 
-// Only one copy at a time: launching again just reopens the panel.
-if (!app.requestSingleInstanceLock()) {
-  app.quit();
-} else {
+// Only one copy at a time: launching again just reopens the panel. (A copy started by the Restart button
+// may need a moment while the old one finishes exiting, so it retries for a few seconds.)
+const relaunched = process.argv.includes('--relaunched');
+
+function startWhenAllowed(triesLeft) {
+  if (app.requestSingleInstanceLock()) startApp();
+  else if (relaunched && triesLeft > 0) setTimeout(() => startWhenAllowed(triesLeft - 1), 500);
+  else app.quit();
+}
+
+function startApp() {
   app.on('second-instance', () => { if (controlWin) showControl(); });
 
   app.whenReady().then(() => {
@@ -648,6 +663,8 @@ if (!app.requestSingleInstanceLock()) {
     config.mascots.filter((m) => m.enabled).forEach(openOverlay); // restore last session
   });
 
-  app.on('before-quit', () => { quitting = true; });
+  app.on('before-quit', () => { quitting = true; flushConfig(); });
   app.on('window-all-closed', () => { /* keep running in the tray */ });
 }
+
+startWhenAllowed(20);

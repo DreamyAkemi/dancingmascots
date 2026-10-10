@@ -237,7 +237,6 @@ function render() {
   $('fsHint').hidden = !!state.fullscreenSupported;
   $('login').checked = !!s.launchAtLogin;
   $('onTop').checked = !!s.alwaysOnTop;
-  $('lowMem').checked = !!s.lowMemory;
   for (const b of $('octave').children) b.classList.toggle('on', +b.dataset.v === s.octave);
   if ($('audioSource').value !== s.audioSource && !$('audioSource').matches(':focus')) $('audioSource').value = s.audioSource;
   renderStatus();
@@ -383,7 +382,6 @@ $('diag').onclick = async () => {
   $('diag').textContent = 'Copied!';
   setTimeout(() => { $('diag').textContent = 'Copy diagnostics'; }, 2000);
 };
-$('lowMem').onchange = (e) => update({ lowMemory: e.target.checked });
 $('onTop').onchange = (e) => update({ alwaysOnTop: e.target.checked });
 $('login').onchange = (e) => update({ launchAtLogin: e.target.checked });
 $('bounceStrength').oninput = (e) => update({ bounceStrength: +e.target.value });

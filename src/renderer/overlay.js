@@ -37,15 +37,6 @@ let patchCache = null;  // Map(frameIndex -> pixels) when the GIF is small enoug
 let cur = 0;            // index of the frame currently shown
 let acc = 0;            // milliseconds accumulated towards the next frame
 
-// Efficient mode (optional, see settings.lowMemory). Instead of decoding the GIF again on every frame,
-// every frame is composed once at load time and shrunk to the size it is actually shown at.
-// Playback then only draws a ready-made bitmap, which uses far less CPU.
-let lowMemory = false;  // fixed for the lifetime of this page (toggling the setting reloads it)
-let scaled = null;      // ImageBitmap per frame, already composed and shrunk (low memory mode only)
-let scaledW = 0;        // width the bitmaps were made at
-let nativeW = 0, nativeH = 0; // the GIF's own size
-let buildToken = 0;     // lets a newer build cancel an older one
-
 // When another app is fullscreen on this monitor the main process hides us and sets `paused`,
 // which stops the animation loop entirely (zero CPU) until it is cleared.
 let paused = false;
@@ -63,8 +54,8 @@ let restore = null; // saved image for the "restore to previous" disposal method
 
 // ───────────────────────────── Loading + decoding ─────────────────────────────
 
-/** Read the GIF file and keep its (still compressed) frames in `raw` / `gct`. Returns the GIF's size. */
-function readGif(path) {
+/** Read and parse the GIF, set up the canvases, and draw the first frame. */
+function load(path) {
   if (fs.statSync(path).size > MAX_FILE_BYTES) throw new Error('GIF file is too large');
   const buf = fs.readFileSync(path);
   const gif = parseGIF(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength));
@@ -75,12 +66,6 @@ function readGif(path) {
   gct = gif.gct;
   raw = gif.frames.filter((f) => f.image);
   if (!raw.length || raw.length > MAX_FRAMES) throw new Error('GIF has an unsupported number of frames');
-  return { width, height };
-}
-
-/** Read and parse the GIF, set up the canvases, and draw the first frame. */
-function load(path) {
-  const { width, height } = readGif(path);
 
   // One pass to collect per-frame metadata; the decoded pixels are thrown away straight away.
   frames = raw.map((f) => {
@@ -88,20 +73,12 @@ function load(path) {
     return { dims, disposalType, delay };
   });
 
-  nativeW = width; nativeH = height;
-  lowMemory = !!(settings && settings.lowMemory);
-  cur = 0; acc = 0; restore = null;
-
-  ipcRenderer.send('overlay:aspect', width / height, width); // lets the main process size the window
-
-  if (lowMemory) {
-    patchCache = null;
-    buildScaledFrames(); // asynchronous; the first picture appears when it finishes
-    return;
-  }
   patchCache = frames.length * width * height * 4 <= CACHE_BYTES ? new Map() : null;
   canvas.width = view.width = width;
   canvas.height = view.height = height;
+  cur = 0; acc = 0; restore = null;
+
+  ipcRenderer.send('overlay:aspect', width / height, width); // lets the main process size the window
   drawFrame(0);
 }
 
@@ -119,13 +96,6 @@ function getPatch(i) {
  *   2 = clear that area to transparent, 3 = restore what was there before it.
  */
 function drawFrame(i) {
-  composeFrame(i);
-  vctx.clearRect(0, 0, view.width, view.height);
-  vctx.drawImage(canvas, 0, 0);
-}
-
-/** Apply frame i to the (hidden) full-size picture, honouring the disposal rules above. */
-function composeFrame(i) {
   const f = frames[i], prev = frames[(i - 1 + frames.length) % frames.length];
 
   if (i === 0) ctx.clearRect(0, 0, canvas.width, canvas.height); // looped back to the start
@@ -138,65 +108,10 @@ function composeFrame(i) {
   patchCanvas.width = width; patchCanvas.height = height;
   patchCtx.putImageData(new ImageData(getPatch(i), width, height), 0, 0);
   ctx.drawImage(patchCanvas, left, top);
-}
 
-// ───────────────────────────── Low memory mode ─────────────────────────────
-
-/** Size the GIF should be stored at: the size it is shown at on screen, never bigger than the GIF itself. */
-function targetSize() {
-  const px = Math.round(window.innerWidth * (window.devicePixelRatio || 1));
-  const w = Math.min(nativeW, Math.max(32, Math.ceil(px / 16) * 16)); // steps of 16 so tiny resizes don't rebuild
-  return { w, h: Math.max(1, Math.round(w * nativeH / nativeW)) };
-}
-
-/**
- * Compose every frame in order at full size, shrink each one, and keep only the small bitmaps.
- * Runs frame by frame (awaiting in between) so other mascots keep animating while it works.
- * A newer call cancels an older, still-running one.
- */
-async function buildScaledFrames() {
-  const token = ++buildToken;
-  if (!raw) readGif(mascot.path); // the compressed data is dropped after a build; read it again if needed
-  const { w, h } = targetSize();
-  canvas.width = nativeW; canvas.height = nativeH; restore = null;
-
-  const bitmaps = [];
-  for (let i = 0; i < frames.length; i++) {
-    composeFrame(i);
-    bitmaps.push(await createImageBitmap(canvas, { resizeWidth: w, resizeHeight: h, resizeQuality: 'high' }));
-    if (token !== buildToken) { bitmaps.forEach((b) => b.close()); return; } // superseded
-  }
-
-  const old = scaled;
-  scaled = bitmaps; scaledW = w;
-  view.width = w; view.height = h; // (resets the canvas, so draw again below)
-  showScaled(cur);
-  if (old) old.forEach((b) => b.close());
-
-  // The full-size working canvases and the compressed GIF data are no longer needed: give the memory back.
-  canvas.width = canvas.height = 1;
-  patchCanvas.width = patchCanvas.height = 1;
-  restore = null;
-  raw = null; gct = null;
-}
-
-/** Show frame i from the pre-shrunk bitmaps. */
-function showScaled(i) {
-  if (!scaled || !scaled[i]) return;
   vctx.clearRect(0, 0, view.width, view.height);
-  vctx.drawImage(scaled[i], 0, 0);
+  vctx.drawImage(canvas, 0, 0);
 }
-
-// If the mascot is resized a lot, rebuild at a size that still looks sharp (or that wastes less memory).
-let resizeTimer = null;
-window.addEventListener('resize', () => {
-  if (!lowMemory || !scaled) return;
-  clearTimeout(resizeTimer);
-  resizeTimer = setTimeout(() => {
-    const { w } = targetSize();
-    if (w > scaledW * 1.1 || w < scaledW * 0.65) buildScaledFrames();
-  }, 500);
-});
 
 /** A frame's display time in ms. Browsers treat 0/10 ms delays as 100 ms; so do we. */
 const frameDelay = (f) => (f.delay <= 10 ? 100 : f.delay);
@@ -254,7 +169,7 @@ function tick(now) {
       cur = (cur + 1) % frames.length;
       advanced = true;
     }
-    if (advanced) (lowMemory ? showScaled(cur) : drawFrame(cur));
+    if (advanced) drawFrame(cur);
   }
 
   // Optional beat bounce: rest slightly squashed, snap to full height on each beat.
