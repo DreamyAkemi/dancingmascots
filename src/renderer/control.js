@@ -217,6 +217,7 @@ function drawGraph() {
 }
 $('graphBox').addEventListener('toggle', drawGraph);
 
+let startedSoft = null; // compatibility-mode value at startup (a restart is needed to change it)
 let lastKey = ''; // fingerprint of the mascot list structure (see render)
 
 /** Sync every control with `state`, and rebuild the mascot list if its structure changed. */
@@ -236,6 +237,9 @@ function render() {
   $('fsHint').hidden = !!state.fullscreenSupported;
   $('login').checked = !!s.launchAtLogin;
   $('onTop').checked = !!s.alwaysOnTop;
+  $('soft').checked = !!s.softwareRendering;
+  if (startedSoft === null) startedSoft = !!s.softwareRendering; // value the app started with
+  $('softRow').hidden = !!s.softwareRendering === startedSoft;
   for (const b of $('octave').children) b.classList.toggle('on', +b.dataset.v === s.octave);
   if ($('audioSource').value !== s.audioSource && !$('audioSource').matches(':focus')) $('audioSource').value = s.audioSource;
   renderStatus();
@@ -369,6 +373,13 @@ $('globalSpeed').oninput = (e) => {
 $('locked').onchange = (e) => update({ locked: e.target.checked });
 $('bounce').onchange = (e) => update({ bounce: e.target.checked });
 $('pauseFs').onchange = (e) => update({ pauseOnFullscreen: e.target.checked });
+$('soft').onchange = (e) => update({ softwareRendering: e.target.checked });
+$('restart').onclick = () => ipcRenderer.send('app:restart');
+$('diag').onclick = async () => {
+  await ipcRenderer.invoke('diagnostics'); // main copies it to the clipboard
+  $('diag').textContent = 'Copied!';
+  setTimeout(() => { $('diag').textContent = 'Copy diagnostics'; }, 2000);
+};
 $('onTop').onchange = (e) => update({ alwaysOnTop: e.target.checked });
 $('login').onchange = (e) => update({ launchAtLogin: e.target.checked });
 $('bounceStrength').oninput = (e) => update({ bounceStrength: +e.target.value });

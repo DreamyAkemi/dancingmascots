@@ -74,6 +74,7 @@ graph shows how it's doing.
 | --- | --- |
 | **Keep mascots above other windows** | On: always visible. Off: other windows can cover them. |
 | **Pause & hide while another app is fullscreen** | Saves performance during games and videos. Only affects mascots on that monitor. |
+| **Compatibility mode** | Draws without the graphics card. Try it if mascots show a white or black box around them. Needs a restart. |
 | **Launch at Windows startup** | Starts the app hidden in the tray when you log in. |
 
 ### Each mascot
@@ -104,6 +105,10 @@ or ones with tempo changes) are hard to read automatically.
 **A mascot disappeared or is off-screen.**
 Click **Reset positions** at the bottom of the panel. If you unplug a monitor, mascots on it move to your
 main screen automatically.
+
+**Mascots have a white (or black) box around them.**
+Turn on **Compatibility mode** in the panel and click **Restart now**. If it still happens, click
+**Copy diagnostics** and include the text when you report the problem.
 
 **I can't grab a mascot.**
 **Lock overlays** is probably on. Untick it in the panel, or in the tray menu.
