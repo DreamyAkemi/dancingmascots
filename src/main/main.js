@@ -22,11 +22,9 @@ const {
 } = require('electron');
 const { watchFullscreen } = require('./fullscreen');
 
-// Let all our windows share ONE renderer process instead of one process per window.
-// Measured with 7 mascots: ~1.8 GB per-window vs ~0.6 GB shared. Overlays only do light canvas
-// drawing, so sharing a process costs nothing noticeable.
-app.commandLine.appendSwitch('process-per-site');
-
+// NOTE: we used to make all windows share ONE renderer process (the 'process-per-site' switch) to
+// save memory. On Windows that left mascots added while the app was running with a solid white
+// background until the app was restarted, so every window now gets its own process.
 
 // ───────────────────────────── Constants ─────────────────────────────
 
