@@ -51,6 +51,7 @@ const DEFAULT_SETTINGS = {
   pauseOnFullscreen: true, // pause + hide mascots on a monitor while another app is fullscreen there
   launchAtLogin: false,    // start with Windows (hidden in the tray)
   alwaysOnTop: true,       // true = mascots stay above other windows; false = behave like a normal window
+  lowMemory: false,        // "Efficient mode": prepare every frame once at its on-screen size (much less CPU)
 };
 
 // ───────────────────────────── State ─────────────────────────────
@@ -100,6 +101,7 @@ function sanitizeSettings(src) {
   if (typeof src.pauseOnFullscreen === 'boolean') out.pauseOnFullscreen = src.pauseOnFullscreen;
   if (typeof src.launchAtLogin === 'boolean') out.launchAtLogin = src.launchAtLogin;
   if (typeof src.alwaysOnTop === 'boolean') out.alwaysOnTop = src.alwaysOnTop;
+  if (typeof src.lowMemory === 'boolean') out.lowMemory = src.lowMemory;
   return out;
 }
 
@@ -380,7 +382,10 @@ ipcMain.on('mascot:reset-positions', () => { // everything back onto the primary
 // Global settings (also used by the tray menu and the overlay right-click menu).
 ipcMain.on('settings:update', (_e, rawPatch) => {
   const patch = sanitizeSettings(rawPatch);
+  const efficientModeChanged = 'lowMemory' in patch && patch.lowMemory !== config.settings.lowMemory;
   Object.assign(config.settings, patch);
+  // Efficient mode is chosen when a mascot loads, so reload the overlay pages to switch modes.
+  if (efficientModeChanged) for (const w of overlays.values()) if (!w.isDestroyed()) w.webContents.reload();
   if ('locked' in patch) for (const w of overlays.values()) w.setIgnoreMouseEvents(config.settings.locked);
   if ('alwaysOnTop' in patch) for (const w of overlays.values()) if (!w.isDestroyed()) applyStacking(w);
   if ('pauseOnFullscreen' in patch) applyFullscreen();

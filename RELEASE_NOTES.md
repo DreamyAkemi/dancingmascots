@@ -14,6 +14,8 @@ certificate: click **More info**, then **Run anyway**.
 
 - **Restart app button** (and a reminder right after you add a GIF) for the glitch where a mascot you just added
   has a white box around it on some PCs. Restarting the app clears it.
+- **Efficient mode** (optional checkbox, off by default): prepares each GIF once at the size it is shown at, which
+  uses much less processor when several mascots are running.
 - Removed the "Compatibility mode" checkbox from 1.0.1: it didn't help.
 - This version goes back to the lighter, faster engine of 1.0.1. Versions 1.0.2 to 1.0.4 were withdrawn because
   they used more memory and CPU.
