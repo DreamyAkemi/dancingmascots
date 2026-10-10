@@ -106,10 +106,10 @@ Click **Reset positions** at the bottom of the panel. If you unplug a monitor, m
 main screen automatically.
 
 **Mascots have a white (or black) box around them.**
-The GIF itself most likely has a solid white (or black) background instead of a transparent one, so it
-shows as a rectangle. To check, open the GIF in a browser tab with a dark theme: if the white is still there,
-it's part of the picture. Chat apps and some download sites flatten transparency when a GIF is re-saved or
-converted, so get the original file when you can.
+Update to the latest version, which fixes this for newly added GIFs. On older versions, quit the app from
+the tray icon and start it again. If a GIF still has the box after that, it most likely has a solid
+background baked into the picture (chat apps and some download sites flatten transparency when a GIF is
+re-saved). Try the original file.
 
 **I can't grab a mascot.**
 **Lock overlays** is probably on. Untick it in the panel, or in the tray menu.
