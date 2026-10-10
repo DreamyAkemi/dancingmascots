@@ -213,6 +213,34 @@ ipcRenderer.on('settings', (_e, s) => { settings = s; applySettings(); });
 ipcRenderer.on('tempo', (_e, t) => { tempo = t; });
 ipcRenderer.on('paused', (_e, p) => { paused = p; if (!paused) startLoop(); });
 
+// ───────────────────────────── Diagnostics ─────────────────────────────
+// The main process calls this when the user clicks "Copy diagnostics". It describes the GIF and
+// measures how transparent the picture really is, both in memory and on the canvas, which tells us
+// whether a "white box" comes from the picture data or from how the window is drawn.
+window.__gifInfo = () => {
+  const count = (data) => { let n = 0; for (let i = 3; i < data.length; i += 4) if (data[i] === 0) n++; return n; };
+  const total = view.width * view.height;
+  const pct = (n) => `${(100 * n / total).toFixed(1)}%`;
+  const disposals = {};
+  frames.forEach((f) => { disposals[f.disposalType] = (disposals[f.disposalType] || 0) + 1; });
+  const croppedFrames = frames.filter((f) => f.dims.width < view.width || f.dims.height < view.height).length;
+  const attrs = vctx.getContextAttributes ? vctx.getContextAttributes() : {};
+  return {
+    name: mascot && mascot.name,
+    size: `${view.width}x${view.height}`,
+    frames: frames.length,
+    croppedFrames,
+    disposalMethods: disposals,
+    firstFrameDims: frames[0] ? JSON.stringify(frames[0].dims) : null,
+    transparentInMemory: compositor ? pct(count(compositor.pixels)) : null,
+    transparentOnCanvas: pct(count(vctx.getImageData(0, 0, view.width, view.height).data)),
+    canvasAlpha: attrs.alpha,
+    devicePixelRatio: window.devicePixelRatio,
+    currentFrame: cur,
+    paused,
+  };
+};
+
 // ───────────────────────────── Startup ─────────────────────────────
 (async () => {
   const init = await ipcRenderer.invoke('overlay:init');

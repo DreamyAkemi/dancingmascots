@@ -544,6 +544,24 @@ function updateTrayMenu() {
 
 // ───────────────────────────── Support tools ─────────────────────────────
 
+/** One line per open mascot window: what the GIF looks like to the app, and how its window is set up. */
+async function describeOverlays() {
+  const lines = [];
+  for (const [id, win] of overlays) {
+    if (win.isDestroyed()) continue;
+    let info = {};
+    try {
+      info = await Promise.race([
+        win.webContents.executeJavaScript('window.__gifInfo && window.__gifInfo()'),
+        new Promise((resolve) => setTimeout(() => resolve({ error: 'no answer' }), 3000)),
+      ]) || {};
+    } catch (e) { info = { error: e.message }; }
+    const b = win.getBounds();
+    lines.push(`  - ${JSON.stringify({ ...info, window: `${b.width}x${b.height}`, visible: win.isVisible(), background: win.getBackgroundColor(), id })}`);
+  }
+  return lines.length ? lines : ['  (no mascots open)'];
+}
+
 /** A plain-text summary of the system, to paste into a bug report. Contains no personal data. */
 async function buildDiagnostics() {
   let gpu = {};
@@ -559,6 +577,7 @@ async function buildDiagnostics() {
     `GPU feature status: ${JSON.stringify(app.getGPUFeatureStatus())}`,
     'GPU devices:', ...(devices.length ? devices : ['  (none reported)']),
     'Displays:', ...displays,
+    'GIFs:', ...await describeOverlays(),
     `Mascots: ${config.mascots.length} (${[...overlays.values()].length} open)`,
     `Settings: ${JSON.stringify(config.settings)}`,
   ].join('\n');
