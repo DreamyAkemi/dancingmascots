@@ -83,6 +83,26 @@ function isUsableGif(p) {
   } catch { return false; }
 }
 
+/**
+ * The size a mascot's window should open at, worked out from the GIF's own header (its width and
+ * height are stored in bytes 6-9). Opening the window at its final size matters: resizing a
+ * transparent window right after creation can leave it with a solid white background on Windows.
+ * @returns {{w:number,h:number}|null} 120–260 px wide, keeping the GIF's proportions
+ */
+function defaultWindowSize(p) {
+  try {
+    const fd = fs.openSync(p, 'r');
+    const head = Buffer.alloc(10);
+    fs.readSync(fd, head, 0, 10, 0);
+    fs.closeSync(fd);
+    if (head.toString('latin1', 0, 4) !== 'GIF8') return null;
+    const gw = head.readUInt16LE(6), gh = head.readUInt16LE(8);
+    if (!gw || !gh) return null;
+    const w = Math.round(clamp(gw, 120, 260));
+    return { w, h: Math.max(40, Math.round(w * gh / gw)) };
+  } catch { return null; }
+}
+
 /** Keep only valid, in-range settings from `src`. Unknown keys and bad values are dropped. */
 function sanitizeSettings(src) {
   const out = {};
@@ -176,6 +196,10 @@ function pushState() {
 /** Create the transparent always-on-top window for one mascot (no-op if already open). */
 function openOverlay(m) {
   if (overlays.has(m.id) || !isUsableGif(m.path)) return;
+  if (!m.w || !m.h) { // never sized yet: open at the right size straight away (no resize later)
+    const size = defaultWindowSize(m.path);
+    if (size) { m.w = size.w; m.h = size.h; saveConfig(); }
+  }
 
   const win = new BrowserWindow({
     x: m.x, y: m.y,
@@ -314,7 +338,7 @@ function addMascots(paths) {
       name: path.basename(p, path.extname(p)),
       path: p, enabled: true,
       x: 120 + (n % 6) * 90, y: 160 + (n % 4) * 60,
-      w: 0, h: 0, // 0 = overlay picks a size from the GIF once it has loaded
+      w: 0, h: 0, // filled in from the GIF's header when the window opens (see openOverlay)
       baseBpm: 120, speed: 1, smart: false, flip: false,
     };
     config.mascots.push(m);
@@ -408,20 +432,18 @@ ipcMain.handle('overlay:init', (e) => {
   return m ? { mascot: m, settings: config.settings, tempo, paused: isPausedByFullscreen(overlays.get(id)) } : null;
 });
 
-// The overlay tells us the GIF's size/aspect ratio once it has decoded it.
+// The overlay tells us the GIF's aspect ratio once it has decoded it. The window normally already
+// has the right proportions (see defaultWindowSize), so this only steps in if they are wrong; resizing
+// a transparent window is avoided whenever possible.
 ipcMain.on('overlay:aspect', (e, aspect, naturalW) => {
   if (!isNum(aspect) || aspect <= 0 || !isNum(naturalW)) return;
   const id = overlayIdOf(e.sender), m = findMascot(id), win = overlays.get(id);
   if (!m || !win) return;
   const b = win.getBounds();
-  if (!m.w || !m.h) {
-    // First time we see this GIF: pick a comfortable default size (120–260 px wide).
-    const width = Math.round(clamp(naturalW, 120, 260));
-    win.setBounds({ x: b.x, y: b.y, width, height: Math.round(width / aspect) });
+  const height = Math.round(b.width / aspect);
+  if (Math.abs(height - b.height) > 1) {
+    win.setBounds({ x: b.x, y: b.y, width: b.width, height });
     saveBounds(id);
-  } else {
-    // Keep the saved width but make sure the height matches the GIF's true proportions.
-    win.setBounds({ x: b.x, y: b.y, width: b.width, height: Math.round(b.width / aspect) });
   }
 });
 
