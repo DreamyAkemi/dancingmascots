@@ -18,7 +18,7 @@ const path = require('path');
 const fs = require('fs');
 const {
   app, BrowserWindow, ipcMain, dialog, Menu, Tray, nativeImage,
-  desktopCapturer, session, screen, clipboard,
+  desktopCapturer, session, screen, clipboard, powerMonitor,
 } = require('electron');
 const { watchFullscreen } = require('./fullscreen');
 
@@ -567,7 +567,11 @@ async function buildDiagnostics() {
     `GPU feature status: ${JSON.stringify(app.getGPUFeatureStatus())}`,
     'GPU devices:', ...(devices.length ? devices : ['  (none reported)']),
     'Displays:', ...displays,
-    `Mascots: ${config.mascots.length} (${[...overlays.values()].length} open)`,
+    `Fullscreen app detected on display: ${fullscreenDisplayId === null ? 'none' : fullscreenDisplayId}`,
+    'Mascots:', ...config.mascots.map((m) => {
+      const w = overlays.get(m.id), b = w && !w.isDestroyed() ? w.getBounds() : null;
+      return `  - ${m.name}: ${m.enabled ? 'on' : 'off'}${b ? `, window ${b.width}x${b.height} at ${b.x},${b.y}, ${w.isVisible() ? 'visible' : 'HIDDEN'}` : ', no window'}`;
+    }),
     `Settings: ${JSON.stringify(config.settings)}`,
   ].join('\n');
 }
@@ -643,6 +647,14 @@ function startApp() {
     }, { useSystemPicker: false });
 
     createControl();
+
+    // After sleep or a screen unlock the audio device may have changed (headset reconnected...):
+    // tell the control panel to reconnect its audio capture.
+    const reconnectAudio = () => setTimeout(() => {
+      if (controlWin && !controlWin.isDestroyed()) controlWin.webContents.send('audio:restart');
+    }, 3000);
+    powerMonitor.on('resume', reconnectAudio);
+    powerMonitor.on('unlock-screen', reconnectAudio);
 
     // React to monitors being plugged / unplugged / rearranged, and to other apps going fullscreen.
     const onDisplaysChanged = () => { overlays.forEach((w, id) => ensureOnScreen(w, id)); applyFullscreen(); };

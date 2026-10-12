@@ -25,26 +25,43 @@ let audioCtx = null, analyser = null, stream = null, source = null;
 let freq = null, prevFreq = null, wave = null; // reusable buffers for the analyser
 let audioError = null;                         // message shown in the status line if capture fails
 
+let lastAudioStartedAt = 0; // when the capture last started successfully (ms)
+let audioToken = 0;        // each start gets a number, so a slow older start can't overwrite a newer one
+let retryTimer = null;     // pending automatic retry after a failure
+let retryDelay = 5000;     // ms; doubles after each failure (max 60 s)
+
+/** Try again after a failure or a lost device, waiting a bit longer each time. */
+function scheduleRetry(ms = retryDelay) {
+  clearTimeout(retryTimer);
+  retryTimer = setTimeout(startAudio, ms);
+  retryDelay = Math.min(retryDelay * 2, 60000);
+}
+
 /** (Re)start capturing from the audio source chosen in settings. */
 async function startAudio() {
+  const token = ++audioToken;
+  clearTimeout(retryTimer);
   stopAudio();
   audioError = null;
   const src = state.settings.audioSource || 'loopback';
   try {
+    let s;
     if (src === 'loopback') {
       // The main process answers this request with a loopback of the default output device.
       // Chromium insists on a video track too; we stop it immediately and keep only the audio.
-      stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
-      stream.getVideoTracks().forEach((t) => t.stop());
-      if (!stream.getAudioTracks().length) {
+      s = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+      s.getVideoTracks().forEach((t) => t.stop());
+      if (!s.getAudioTracks().length) {
         throw new Error('System audio capture is not available. Pick an input device (e.g. "Stereo Mix") instead.');
       }
     } else {
       // A specific input device. All the "helpful" voice processing is off: we want the raw music.
-      stream = await navigator.mediaDevices.getUserMedia({
+      s = await navigator.mediaDevices.getUserMedia({
         audio: { deviceId: { exact: src }, echoCancellation: false, noiseSuppression: false, autoGainControl: false },
       });
     }
+    if (token !== audioToken) { s.getTracks().forEach((t) => t.stop()); return; } // a newer start took over
+    stream = s;
     audioCtx = new AudioContext();
     source = audioCtx.createMediaStreamSource(new MediaStream(stream.getAudioTracks()));
     analyser = audioCtx.createAnalyser();
@@ -55,8 +72,20 @@ async function startAudio() {
     prevFreq = new Float32Array(analyser.frequencyBinCount).fill(-100);
     wave = new Float32Array(analyser.fftSize);
     tracker.reset();
+    retryDelay = 5000;
+    lastAudioStartedAt = performance.now();
+
+    // If the device goes away (headset unplugged, driver reset...), the track ends: reconnect.
+    for (const track of stream.getAudioTracks()) {
+      track.addEventListener('ended', () => {
+        if (token !== audioToken) return;
+        audioError = 'Audio source lost, reconnecting…';
+        renderStatus();
+        scheduleRetry(2000);
+      });
+    }
   } catch (e) {
-    audioError = e.message || String(e);
+    if (token === audioToken) { audioError = e.message || String(e); scheduleRetry(); }
     console.error(e);
   }
   render();
@@ -102,6 +131,32 @@ analysisTick();
 
 let shown = { playing: false, bpm: null, held: false }; // what the BPM readout / status show
 
+// ───── Silence watchdog ─────
+// If nothing has been heard for a while, the capture may be stuck on a device that went away (headset
+// reconnected, PC woke from sleep, default output changed). Restarting the capture is cheap and fixes
+// that, so do it now and then, waiting longer each time while the silence continues.
+let silentSince = null;      // when the current stretch of silence began (ms)
+let silentLong = false;      // silent for 15 s or more? (used for the hint under the audio source)
+let nextWatchdogRestart = 0;
+let watchdogDelay = 30000;   // ms until the first automatic restart; doubles up to 10 min
+
+function watchForSilence(playing) {
+  const now = performance.now();
+  if (!analyser || !mascotsVisible || playing) {
+    silentSince = null; watchdogDelay = playing ? 30000 : watchdogDelay; nextWatchdogRestart = 0;
+    if (silentLong) { silentLong = false; renderListening(); }
+    return;
+  }
+  if (silentSince === null) silentSince = now;
+  const long = now - silentSince >= 15000;
+  if (long !== silentLong) { silentLong = long; renderListening(); }
+  if (now - silentSince >= 30000 && now >= nextWatchdogRestart) {
+    nextWatchdogRestart = now + watchdogDelay;
+    watchdogDelay = Math.min(watchdogDelay * 2, 600000);
+    startAudio();
+  }
+}
+
 // 2×/s: ask the tracker for its smoothed result and send it to the mascots.
 setInterval(() => {
   const t = analyser ? tracker.update() : { playing: false, bpm: null, confidence: 0, beatT: null, period: null };
@@ -121,6 +176,8 @@ setInterval(() => {
   const held = !manual && t.playing && t.bpm !== null && !t.trusted;
   shown = { playing: t.playing, bpm: bpm ? bpm * (state.settings.octave || 1) : null, held };
   renderStatus();
+
+  watchForSilence(t.playing);
 
   recordHistory({ t: Date.now(), playing: t.playing, applied: shown.bpm, raw: t.raw, held });
   drawGraph();
@@ -346,7 +403,40 @@ async function makeThumbnail(m) {
   }
 }
 
+// ───── "Listening to ..." line ─────
+// "System audio" follows the Windows DEFAULT output device, so show which one that is. It is the first
+// thing to check when no sound is heard.
+let defaultOutputName = null;
+
+async function refreshListening() {
+  try {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const d = devices.find((x) => x.kind === 'audiooutput' && x.deviceId === 'default');
+    defaultOutputName = d && d.label ? d.label.replace(/^Default - /, '') : null;
+  } catch { defaultOutputName = null; }
+  renderListening();
+}
+
+function renderListening() {
+  const el = $('listening');
+  if ((state.settings.audioSource || 'loopback') !== 'loopback') { el.textContent = ''; return; }
+  const device = defaultOutputName ? `“${defaultOutputName}”` : 'your Windows default output device';
+  el.textContent = silentLong
+    ? `No sound heard on ${device}. If your music plays on a different device, make that device your Windows default output (Settings → System → Sound).`
+    : `Listening to what plays on ${device} (the Windows default output).`;
+}
+
 // ───── Audio source dropdown ─────
+let deviceChangeTimer = null;
+/** A device was plugged in / removed / became the default: refresh the list and reconnect the capture. */
+function onDeviceChange() {
+  populateDevices();
+  refreshListening();
+  clearTimeout(deviceChangeTimer);
+  // Give Windows a moment to settle first. (Ignore echoes of our own capture starting.)
+  deviceChangeTimer = setTimeout(() => { if (performance.now() - lastAudioStartedAt > 4000) startAudio(); }, 1500);
+}
+
 async function populateDevices() {
   const sel = $('audioSource');
   sel.replaceChildren(el('option', { value: 'loopback', text: 'System audio (what you hear)' }));
@@ -414,7 +504,10 @@ window.addEventListener('drop', (e) => {
 });
 
 // The main process pushes a fresh snapshot whenever the library or settings change.
-ipcRenderer.on('state', (_e, s) => { state = s; render(); });
+ipcRenderer.on('state', (_e, s) => { state = s; render(); renderListening(); });
+
+// After the PC wakes from sleep (or the screen is unlocked) the audio device may have changed.
+ipcRenderer.on('audio:restart', () => startAudio());
 
 // Main tells us whether any mascot is currently visible (see analysisTick).
 ipcRenderer.on('activity', (_e, needed) => { mascotsVisible = needed; renderStatus(); });
@@ -425,5 +518,6 @@ ipcRenderer.on('activity', (_e, needed) => { mascotsVisible = needed; renderStat
   render();
   await startAudio();
   await populateDevices();
-  navigator.mediaDevices.addEventListener('devicechange', populateDevices);
+  await refreshListening();
+  navigator.mediaDevices.addEventListener('devicechange', onDeviceChange);
 })();

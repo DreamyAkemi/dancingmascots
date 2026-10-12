@@ -94,6 +94,17 @@ panel makes mascots ignore the mouse; unlock from the panel or the tray menu.
 
 ## Troubleshooting
 
+**The mascots stopped reacting after I reconnected my headset / woke my PC.**
+The app reconnects to the sound by itself (when a device changes, after sleep, and every so often while it hears
+nothing). The panel shows which device it is listening to: **"System audio" always follows the Windows default
+output device**. If your music plays on a different device than that one, change the default in
+*Settings → System → Sound → Output* and the mascots pick it up within a few seconds.
+
+**I want the mascots to ignore voice chat.**
+Because the app only listens to the Windows *default* output, set your music device as the default and have your
+voice app (Discord, a game's chat...) play on another device. Many headsets and tools (for example SteelSeries
+Sonar's Chat / Gaming / Media outputs) already split sound this way.
+
 **The mascots don't move.**
 Check that the status says *Playing*. The app listens to your default output device, so make sure the sound
 is actually playing through it. You can also try another **Audio source**, or switch to **Manual** and set a BPM.

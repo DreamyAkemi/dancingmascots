@@ -14,6 +14,9 @@ certificate: click **More info**, then **Run anyway**.
 
 - **Restart app button** (and a reminder right after you add a GIF) for the glitch where a mascot you just added
   has a white box around it on some PCs. Restarting the app clears it.
+- **The sound reconnects by itself** after a headset reconnect, a wake from sleep, or a changed default output, and
+  every so often while nothing is heard. The panel now shows which Windows output device it is listening to.
+- **Copy diagnostics** now lists each mascot and whether its window is visible.
 - Removed the "Compatibility mode" checkbox from 1.0.1: it didn't help.
 - This version goes back to the lighter, faster engine of 1.0.1. Versions 1.0.2 to 1.0.4 were withdrawn because
   they used more memory and CPU.
